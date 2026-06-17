@@ -1,0 +1,552 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>Explorer Map</title>
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: #08080f; font-family: -apple-system, 'SF Pro Display', sans-serif; color: #e8e0cc; overflow: hidden; }
+  #map { position: absolute; inset: 0; bottom: 140px; }
+  #fog-canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 400; }
+
+  /* HUD top */
+  #hud {
+    position: absolute; top: 12px; left: 12px; z-index: 500;
+    background: rgba(8,8,15,0.85); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 12px;
+    padding: 9px 14px; display: flex; gap: 16px; align-items: center;
+    font-size: 12px; color: #8899bb;
+  }
+  .stat { display: flex; flex-direction: column; align-items: center; gap: 1px; }
+  .stat-val { font-size: 14px; font-weight: 700; color: #e8e0cc; }
+  .stat-lbl { font-size: 10px; color: #556677; letter-spacing: 0.05em; }
+
+  /* Follow button */
+  #follow-btn {
+    position: absolute; top: 12px; right: 12px; z-index: 500;
+    background: rgba(8,8,15,0.85); backdrop-filter: blur(12px);
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
+    padding: 8px 12px; font-size: 12px; font-weight: 600; color: #8899bb;
+    cursor: pointer; display: none;
+  }
+  #follow-btn.active { border-color: #4a9eff; color: #4a9eff; }
+
+  /* Draw mode hint */
+  #draw-hint {
+    position: absolute; top: 12px; left: 50%; transform: translateX(-50%);
+    z-index: 500; background: rgba(245,200,66,0.15); backdrop-filter: blur(12px);
+    border: 1px solid rgba(245,200,66,0.4); border-radius: 10px;
+    padding: 7px 14px; font-size: 12px; font-weight: 600; color: #f5c842;
+    pointer-events: none; display: none; white-space: nowrap;
+  }
+
+  /* Bottom bar */
+  #bottom {
+    position: absolute; bottom: 0; left: 0; right: 0; z-index: 500;
+    background: rgba(8,8,15,0.94); backdrop-filter: blur(16px);
+    border-top: 1px solid rgba(255,255,255,0.07);
+    padding: 12px 14px 24px;
+  }
+  #status {
+    font-size: 11px; color: #8899bb; text-align: center;
+    margin-bottom: 10px; min-height: 14px;
+  }
+  #main-btn {
+    width: 100%; padding: 14px; border: none; border-radius: 10px;
+    font-size: 15px; font-weight: 700; cursor: pointer;
+    letter-spacing: 0.03em; margin-bottom: 10px;
+    background: linear-gradient(135deg, #1a6fff, #4a9eff);
+    color: #fff; box-shadow: 0 0 20px rgba(74,158,255,0.35);
+    transition: all 0.15s;
+  }
+  #main-btn.tracking {
+    background: linear-gradient(135deg, #c0392b, #e74c3c);
+    box-shadow: 0 0 20px rgba(231,76,60,0.35);
+  }
+  #actions { display: flex; gap: 8px; }
+  .act-btn {
+    flex: 1; padding: 9px 0; background: rgba(255,255,255,0.05);
+    border: 1px solid rgba(255,255,255,0.08); border-radius: 8px;
+    font-size: 12px; font-weight: 600; color: #8899bb; cursor: pointer;
+    transition: all 0.15s; text-align: center;
+  }
+  .act-btn.active { background: rgba(245,200,66,0.12); border-color: rgba(245,200,66,0.4); color: #f5c842; }
+  .act-btn.danger { color: #ff6655; }
+
+  /* Draw cursor */
+  #map.drawing { cursor: crosshair; }
+
+  /* Leaflet zoom bottom-right */
+  .leaflet-control-zoom { margin-bottom: 8px !important; margin-right: 8px !important; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<canvas id="fog-canvas"></canvas>
+
+<div id="hud">
+  <div class="stat"><span class="stat-val" id="s-dist">0 m</span><span class="stat-lbl">Distance</span></div>
+  <div class="stat"><span class="stat-val" id="s-pts">0</span><span class="stat-lbl">Points</span></div>
+  <div class="stat" id="s-acc-wrap" style="display:none"><span class="stat-val" id="s-acc">—</span><span class="stat-lbl">Accuracy</span></div>
+</div>
+
+<button id="follow-btn" onclick="toggleFollow()">⦿ Following</button>
+<div id="draw-hint">Tap map to add points • Tap last point to undo</div>
+
+<div id="bottom">
+  <div id="status">Tap Start to begin tracking, or Draw to add past routes</div>
+  <button id="main-btn" onclick="toggleTracking()">▶ Start Exploring</button>
+  <div id="actions">
+    <button class="act-btn" id="draw-btn" onclick="toggleDraw()">✏️ Draw Route</button>
+    <button class="act-btn" onclick="exportData()">💾 Save</button>
+    <label class="act-btn">📂 Load<input type="file" accept=".json" onchange="importData(event)" style="display:none"></label>
+    <button class="act-btn danger" onclick="clearAll()">🗑 Clear</button>
+  </div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+// ── constants ────────────────────────────────────────────────────────────────
+const INNER_R_M  = 150;   // fully clear inside this radius
+const MID_R_M    = 500;   // 50% fog between inner and this
+// outside MID_R_M: 75% fog (25% transparent)
+const MIN_DIST_M = 8;     // min GPS movement to record a new point
+
+// fog opacities
+const FOG_OUTER = 0.75;
+const FOG_MID   = 0.50;
+const FOG_INNER = 0.00;
+
+// ── state ────────────────────────────────────────────────────────────────────
+let trail        = [];   // [{lat,lng}] — all recorded points (GPS + drawn)
+let currentPos   = null;
+let tracking     = false;
+let watchId      = null;
+let followMe     = true;
+let drawMode     = false;
+let drawSegment  = [];   // points in the current draw session
+let drawMarkers  = [];   // leaflet markers for draw vertices
+let drawPolyline = null;
+let posMarker    = null;
+let sessionTimer = null;
+let sessionSecs  = 0;
+let totalDist    = 0;
+
+// ── map init ─────────────────────────────────────────────────────────────────
+const map = L.map('map', {
+  center: [40, -30], zoom: 3,
+  zoomControl: false, attributionControl: false,
+});
+
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_nolabels/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_only_labels/{z}/{x}/{y}{r}.png', { maxZoom: 19, pane: 'shadowPane' }).addTo(map);
+L.control.zoom({ position: 'bottomright' }).addTo(map);
+L.control.attribution({ position: 'bottomleft', prefix: '© CARTO © OSM' }).addTo(map);
+
+map.on('dragstart', () => { if (!drawMode) setFollow(false); });
+map.on('move zoom resize viewreset', redrawFog);
+map.on('click', onMapClick);
+
+// ── canvas setup ─────────────────────────────────────────────────────────────
+const canvas = document.getElementById('fog-canvas');
+const ctx    = canvas.getContext('2d');
+
+function resizeCanvas() {
+  const r = document.getElementById('map').getBoundingClientRect();
+  canvas.width  = r.width;
+  canvas.height = r.height;
+  canvas.style.width  = r.width  + 'px';
+  canvas.style.height = r.height + 'px';
+  canvas.style.top  = r.top  + 'px';
+  canvas.style.left = r.left + 'px';
+}
+
+// ── fog rendering ─────────────────────────────────────────────────────────────
+// Strategy: render in layers using composite operations
+// 1. Fill entire canvas with outer fog (75%)
+// 2. For each trail point, paint mid-zone ring (50%) using a solid circle — then
+//    punch the inner zone fully clear.
+// We do this by building an offscreen canvas per zone and compositing.
+
+function metersToPixels(lat, meters) {
+  const p1 = map.latLngToContainerPoint([lat, 0]);
+  const p2 = map.latLngToContainerPoint([lat + meters / 111320, 0]);
+  return Math.abs(p2.y - p1.y);
+}
+
+function redrawFog() {
+  resizeCanvas();
+  const w = canvas.width, h = canvas.height;
+  ctx.clearRect(0, 0, w, h);
+
+  const allPts = currentPos ? [...trail, currentPos] : trail;
+
+  // Layer 1: outer fog everywhere
+  ctx.fillStyle = `rgba(8,12,24,${FOG_OUTER})`;
+  ctx.fillRect(0, 0, w, h);
+
+  if (allPts.length === 0) return;
+
+  // Layer 2: paint mid-zone (50%) over explored areas
+  // We draw solid circles/strokes at MID_R_M, then cut inner holes
+  // Use an offscreen canvas for the mid layer
+  const mid = new OffscreenCanvas(w, h);
+  const mctx = mid.getContext('2d');
+
+  // Fill mid canvas with mid-fog
+  mctx.fillStyle = `rgba(8,12,24,${FOG_MID})`;
+  mctx.fillRect(0, 0, w, h);
+
+  // Punch MID_R_M holes (revealing only the mid-fog underneath, covering outer)
+  // We do this by drawing on a separate mask
+  // Actually: composite approach —
+  // We want: inside MID_R_M → show mid fog (not outer)
+  //          outside MID_R_M → keep outer fog
+  // So on the main canvas we paint solid mid-fog discs, then re-paint outer fog
+  // on top using destination-over... 
+  // Simpler: just draw two passes on main canvas:
+
+  // Pass A: paint mid-zone discs (50% fog) — these REPLACE outer for explored mid zone
+  // We paint as absolute rgba so we need to use a temp canvas approach:
+
+  const tmp = new OffscreenCanvas(w, h);
+  const tctx = tmp.getContext('2d');
+
+  // Draw all mid-radius filled strokes (punch shapes)
+  tctx.fillStyle = 'rgba(0,0,0,1)';
+  tctx.strokeStyle = 'rgba(0,0,0,1)';
+  tctx.lineJoin = 'round';
+  tctx.lineCap = 'round';
+
+  for (let i = 0; i < allPts.length; i++) {
+    const px = map.latLngToContainerPoint([allPts[i].lat, allPts[i].lng]);
+    const rMid = metersToPixels(allPts[i].lat, MID_R_M);
+
+    if (i > 0) {
+      const prev = map.latLngToContainerPoint([allPts[i-1].lat, allPts[i-1].lng]);
+      tctx.lineWidth = rMid * 2;
+      tctx.beginPath();
+      tctx.moveTo(prev.x, prev.y);
+      tctx.lineTo(px.x, px.y);
+      tctx.stroke();
+    }
+    tctx.beginPath();
+    tctx.arc(px.x, px.y, rMid, 0, Math.PI * 2);
+    tctx.fill();
+  }
+
+  // Use tmp as a mask: where tmp is opaque, paint mid-fog on main canvas
+  // Draw mid-fog rect, clipped to tmp shape
+  const mid2 = new OffscreenCanvas(w, h);
+  const m2ctx = mid2.getContext('2d');
+  m2ctx.drawImage(tmp, 0, 0);
+  m2ctx.globalCompositeOperation = 'source-in';
+  m2ctx.fillStyle = `rgba(8,12,24,${FOG_MID})`;
+  m2ctx.fillRect(0, 0, w, h);
+
+  // Paint mid2 onto main canvas (destination-over so it goes under outer fog pixels
+  // that are already there — but we want to REPLACE them, so just draw normally)
+  // We need mid zone to REPLACE outer zone pixels. Use a composite trick:
+  // On main canvas, paint mid2 with 'source-over' — since main already has outer fog
+  // at 0.75, we can't simply overdraw. We need to clear then repaint.
+  // 
+  // Cleanest approach: build final image entirely on offscreen, then blit.
+
+  const final = new OffscreenCanvas(w, h);
+  const fctx = final.getContext('2d');
+
+  // Start: outer fog
+  fctx.fillStyle = `rgba(8,12,24,${FOG_OUTER})`;
+  fctx.fillRect(0, 0, w, h);
+
+  // Clear mid-radius areas, then fill with mid fog
+  fctx.globalCompositeOperation = 'destination-out';
+  fctx.drawImage(tmp, 0, 0);  // clear mid areas
+  fctx.globalCompositeOperation = 'source-over';
+  fctx.drawImage(mid2, 0, 0); // paint mid fog there
+
+  // Now punch inner radius fully clear
+  const inner = new OffscreenCanvas(w, h);
+  const ictx = inner.getContext('2d');
+  ictx.fillStyle = 'rgba(0,0,0,1)';
+  ictx.strokeStyle = 'rgba(0,0,0,1)';
+  ictx.lineJoin = 'round';
+  ictx.lineCap = 'round';
+
+  for (let i = 0; i < allPts.length; i++) {
+    const px = map.latLngToContainerPoint([allPts[i].lat, allPts[i].lng]);
+    const rInner = metersToPixels(allPts[i].lat, INNER_R_M);
+
+    if (i > 0) {
+      const prev = map.latLngToContainerPoint([allPts[i-1].lat, allPts[i-1].lng]);
+      ictx.lineWidth = rInner * 2;
+      ictx.beginPath();
+      ictx.moveTo(prev.x, prev.y);
+      ictx.lineTo(px.x, px.y);
+      ictx.stroke();
+    }
+    ictx.beginPath();
+    ictx.arc(px.x, px.y, rInner, 0, Math.PI * 2);
+    ictx.fill();
+  }
+
+  fctx.globalCompositeOperation = 'destination-out';
+  fctx.drawImage(inner, 0, 0);
+
+  // Blit to main canvas
+  ctx.clearRect(0, 0, w, h);
+  ctx.drawImage(final, 0, 0);
+}
+
+// ── GPS tracking ──────────────────────────────────────────────────────────────
+function toggleTracking() {
+  tracking ? stopTracking() : startTracking();
+}
+
+function startTracking() {
+  if (!navigator.geolocation) { setStatus('⚠️ Geolocation not available'); return; }
+  setStatus('📡 Acquiring GPS signal…');
+  tracking = true;
+  document.getElementById('main-btn').textContent = '⏹ Stop Tracking';
+  document.getElementById('main-btn').classList.add('tracking');
+  document.getElementById('follow-btn').style.display = 'block';
+  setFollow(true);
+  sessionSecs = 0;
+  sessionTimer = setInterval(() => sessionSecs++, 1000);
+
+  watchId = navigator.geolocation.watchPosition(onPosition, onGpsError,
+    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+}
+
+function stopTracking() {
+  if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
+  clearInterval(sessionTimer);
+  tracking = false;
+  currentPos = null;
+  document.getElementById('main-btn').textContent = '▶ Start Exploring';
+  document.getElementById('main-btn').classList.remove('tracking');
+  document.getElementById('follow-btn').style.display = 'none';
+  document.getElementById('s-acc-wrap').style.display = 'none';
+  if (posMarker) { map.removeLayer(posMarker); posMarker = null; }
+  setStatus(`Stopped — ${trail.length} points recorded`);
+  redrawFog();
+}
+
+function onPosition(pos) {
+  const { latitude: lat, longitude: lng, accuracy: acc } = pos.coords;
+  currentPos = { lat, lng };
+
+  // accuracy indicator
+  const accEl = document.getElementById('s-acc');
+  accEl.textContent = `±${Math.round(acc)}m`;
+  accEl.style.color = acc < 15 ? '#4aff88' : acc < 40 ? '#f5c842' : '#ff6655';
+  document.getElementById('s-acc-wrap').style.display = 'flex';
+
+  // position marker
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="width:14px;height:14px;border-radius:50%;background:#4a9eff;border:3px solid #fff;box-shadow:0 0 0 4px rgba(74,158,255,0.3)"></div>`,
+    iconAnchor: [7, 7],
+  });
+  if (posMarker) posMarker.setLatLng([lat, lng]);
+  else { posMarker = L.marker([lat, lng], { icon, zIndexOffset: 1000 }).addTo(map); }
+
+  if (followMe) map.setView([lat, lng], Math.max(map.getZoom(), 16), { animate: true, duration: 0.5 });
+
+  // record point
+  if (trail.length === 0) {
+    trail.push({ lat, lng });
+    setStatus('🟢 Tracking — walk around to reveal the map');
+  } else {
+    const last = trail[trail.length - 1];
+    const d = haversine(last.lat, last.lng, lat, lng);
+    if (d >= MIN_DIST_M) {
+      totalDist += d;
+      trail.push({ lat, lng });
+      updateStats();
+    }
+  }
+  redrawFog();
+}
+
+function onGpsError(err) {
+  setStatus(`⚠️ ${err.message}`);
+  stopTracking();
+}
+
+// ── draw mode ─────────────────────────────────────────────────────────────────
+function toggleDraw() {
+  drawMode = !drawMode;
+  const btn = document.getElementById('draw-btn');
+  const hint = document.getElementById('draw-hint');
+  const mapEl = document.getElementById('map');
+
+  if (drawMode) {
+    btn.classList.add('active');
+    btn.textContent = '✅ Done Drawing';
+    hint.style.display = 'block';
+    mapEl.classList.add('drawing');
+    setStatus('Tap on the map to lay down your route');
+  } else {
+    btn.classList.remove('active');
+    btn.textContent = '✏️ Draw Route';
+    hint.style.display = 'none';
+    mapEl.classList.remove('drawing');
+    commitDrawSegment();
+    setStatus(`Route added — ${trail.length} total points`);
+  }
+}
+
+function onMapClick(e) {
+  if (!drawMode) return;
+  const pt = { lat: e.latlng.lat, lng: e.latlng.lng };
+
+  // Undo last point if clicking very close to it
+  if (drawSegment.length > 0) {
+    const last = drawSegment[drawSegment.length - 1];
+    const d = haversine(last.lat, last.lng, pt.lat, pt.lng);
+    if (d < 20) {
+      // undo
+      drawSegment.pop();
+      const m = drawMarkers.pop();
+      if (m) map.removeLayer(m);
+      if (drawPolyline) {
+        map.removeLayer(drawPolyline);
+        drawPolyline = null;
+      }
+      if (drawSegment.length > 1) {
+        drawPolyline = L.polyline(drawSegment.map(p => [p.lat, p.lng]), { color: '#f5c842', weight: 2, opacity: 0.7, dashArray: '6,4' }).addTo(map);
+      }
+      redrawFog();
+      return;
+    }
+  }
+
+  drawSegment.push(pt);
+
+  // vertex marker
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="width:8px;height:8px;border-radius:50%;background:#f5c842;border:2px solid #fff;box-shadow:0 0 6px rgba(245,200,66,0.6)"></div>`,
+    iconAnchor: [4, 4],
+  });
+  drawMarkers.push(L.marker([pt.lat, pt.lng], { icon }).addTo(map));
+
+  // preview polyline
+  if (drawPolyline) map.removeLayer(drawPolyline);
+  if (drawSegment.length > 1) {
+    drawPolyline = L.polyline(drawSegment.map(p => [p.lat, p.lng]), { color: '#f5c842', weight: 2, opacity: 0.7, dashArray: '6,4' }).addTo(map);
+  }
+
+  // interpolate between last two points so fog covers the whole path
+  if (drawSegment.length > 1) {
+    const prev = drawSegment[drawSegment.length - 2];
+    const interp = interpolatePoints(prev, pt, 50); // every 50m
+    trail.push(...interp);
+    updateStats();
+    redrawFog();
+  } else {
+    trail.push(pt);
+    updateStats();
+    redrawFog();
+  }
+}
+
+function commitDrawSegment() {
+  // clean up visual markers and polyline
+  drawMarkers.forEach(m => map.removeLayer(m));
+  drawMarkers = [];
+  if (drawPolyline) { map.removeLayer(drawPolyline); drawPolyline = null; }
+  drawSegment = [];
+}
+
+// Interpolate points along a straight line every ~stepM meters
+function interpolatePoints(a, b, stepM) {
+  const total = haversine(a.lat, a.lng, b.lat, b.lng);
+  const steps = Math.max(1, Math.floor(total / stepM));
+  const pts = [];
+  for (let i = 1; i <= steps; i++) {
+    const t = i / steps;
+    pts.push({ lat: a.lat + (b.lat - a.lat) * t, lng: a.lng + (b.lng - a.lng) * t });
+  }
+  return pts;
+}
+
+// ── follow me ─────────────────────────────────────────────────────────────────
+function setFollow(val) {
+  followMe = val;
+  const btn = document.getElementById('follow-btn');
+  btn.textContent = val ? '⦿ Following' : '◎ Follow me';
+  btn.classList.toggle('active', val);
+}
+function toggleFollow() { setFollow(!followMe); }
+
+// ── export / import ───────────────────────────────────────────────────────────
+function exportData() {
+  const data = JSON.stringify({ version: 3, trail });
+  const a = Object.assign(document.createElement('a'), {
+    href: URL.createObjectURL(new Blob([data], { type: 'application/json' })),
+    download: 'my-explorations.json',
+  });
+  a.click();
+}
+
+function importData(e) {
+  const file = e.target.files[0]; if (!file) return;
+  const reader = new FileReader();
+  reader.onload = ev => {
+    try {
+      const data = JSON.parse(ev.target.result);
+      const pts = data.trail || data.locations || [];
+      trail = pts;
+      totalDist = 0;
+      updateStats();
+      setStatus(`Loaded ${pts.length} points`);
+      if (pts.length > 0) map.setView([pts[pts.length-1].lat, pts[pts.length-1].lng], 13);
+      redrawFog();
+    } catch { setStatus('⚠️ Could not read file'); }
+  };
+  reader.readAsText(file);
+  e.target.value = '';
+}
+
+function clearAll() {
+  if (!confirm('Clear all exploration data?')) return;
+  trail = []; totalDist = 0; currentPos = null;
+  commitDrawSegment();
+  if (drawMode) toggleDraw();
+  updateStats();
+  setStatus('Map cleared');
+  redrawFog();
+}
+
+// ── helpers ───────────────────────────────────────────────────────────────────
+function haversine(lat1, lng1, lat2, lng2) {
+  const R = 6371000;
+  const dLat = (lat2-lat1)*Math.PI/180, dLng = (lng2-lng1)*Math.PI/180;
+  const a = Math.sin(dLat/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dLng/2)**2;
+  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+}
+
+function fmtDist(m) {
+  return m >= 1000 ? `${(m/1000).toFixed(2)} km` : `${Math.round(m)} m`;
+}
+
+function updateStats() {
+  document.getElementById('s-dist').textContent = fmtDist(totalDist);
+  document.getElementById('s-pts').textContent = trail.length.toLocaleString();
+}
+
+function setStatus(msg) {
+  document.getElementById('status').textContent = msg;
+}
+
+// Initial fog draw
+window.addEventListener('resize', redrawFog);
+setTimeout(redrawFog, 300);
+</script>
+</body>
+</html>
