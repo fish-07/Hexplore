@@ -3,24 +3,19 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-<title>Explorer</title>
+<title>Exploration</title>
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
 html, body { height: 100%; background: #101010; font-family: -apple-system, 'SF Pro Display', sans-serif; color: #E0E0E0; overflow: hidden; }
 
-#map {
-  position: absolute;
-  top: 0; left: 0; right: 0;
-  bottom: 148px; /* height of bottom bar */
-}
+#map { position: absolute; top: 0; left: 0; right: 0; bottom: 148px; }
 #fog-canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 400; }
 
-/* Hide Leaflet zoom controls */
 .leaflet-control-zoom { display: none !important; }
-.leaflet-control-attribution { font-size: 9px !important; opacity: 0.4; }
+.leaflet-control-attribution { font-size: 9px !important; opacity: 0.35; }
 
-/* ── HUD top-left ── */
+/* HUD */
 #hud {
   position: absolute; top: 14px; left: 14px; z-index: 500;
   background: rgba(16,16,16,0.88); backdrop-filter: blur(12px);
@@ -28,38 +23,35 @@ html, body { height: 100%; background: #101010; font-family: -apple-system, 'SF 
   padding: 10px 14px; display: flex; gap: 14px; align-items: flex-start;
 }
 .stat { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 44px; }
-.stat-lbl { font-size: 10px; color: #606070; letter-spacing: 0.06em; text-transform: uppercase; }
+.stat-lbl { font-size: 10px; color: #808090; letter-spacing: 0.02em; }
 .stat-val { font-size: 15px; font-weight: 700; color: #E0E0E0; }
-.stat-val.good  { color: #00E080; }
-.stat-val.warn  { color: #F0A000; }
-.stat-val.bad   { color: #E03020; }
+.stat-val.good { color: #00E080; }
+.stat-val.warn { color: #F0A000; }
+.stat-val.bad  { color: #E03020; }
 
-/* ── Follow button top-right ── */
+/* Follow button */
 #follow-btn {
   position: absolute; top: 14px; right: 14px; z-index: 500;
   background: rgba(16,16,16,0.88); backdrop-filter: blur(12px);
-  border: 1px solid rgba(255,255,255,0.10); border-radius: 10px;
-  padding: 9px 14px; font-size: 13px; font-weight: 600; color: #707080;
+  border: 1px solid rgba(255,255,255,0.20); border-radius: 10px;
+  padding: 9px 16px; font-size: 13px; font-weight: 600; color: #C0C0C0;
   cursor: pointer; display: none;
 }
-#follow-btn.active { border-color: #00A0E0; color: #00A0E0; }
+#follow-btn.active { border-color: #00A0E0; color: #00A0E0; background: rgba(0,160,224,0.10); }
 
-/* ── Bottom bar ── */
+/* Bottom bar */
 #bottom {
   position: absolute; bottom: 0; left: 0; right: 0; z-index: 500;
-  background: #101010;
-  border-top: 1px solid rgba(255,255,255,0.08);
-  padding: 12px 14px 30px;
-  display: flex; flex-direction: column; gap: 8px;
+  background: #101010; border-top: 1px solid rgba(255,255,255,0.08);
+  padding: 12px 14px 30px; display: flex; flex-direction: column; gap: 8px;
 }
 #main-btn {
   width: 100%; padding: 17px; border: none; border-radius: 10px;
   font-size: 16px; font-weight: 700; cursor: pointer;
-  background: #00A0E0; color: #101010;
-  transition: background 0.15s, opacity 0.15s;
+  background: #00A0E0; color: #101010; transition: background 0.15s, opacity 0.15s;
 }
 #main-btn.tracking { background: #E03020; color: #F0F0F0; }
-#main-btn:disabled { opacity: 0.35; }
+#main-btn:disabled { opacity: 0.35; cursor: default; }
 
 #sec-row { display: flex; gap: 8px; }
 .sec-btn {
@@ -68,10 +60,10 @@ html, body { height: 100%; background: #101010; font-family: -apple-system, 'SF 
   font-size: 14px; font-weight: 600; color: #A0A0B0; cursor: pointer;
   transition: all 0.15s; text-align: center;
 }
-.sec-btn:disabled { opacity: 0.30; }
+.sec-btn:disabled { opacity: 0.30; cursor: default; }
 .sec-btn.active { background: rgba(0,160,224,0.12); border-color: #00A0E0; color: #00A0E0; }
 
-/* ── Menu overlay ── */
+/* Menu overlay */
 #menu-overlay {
   position: absolute; inset: 0; z-index: 600;
   background: rgba(10,10,10,0.72); backdrop-filter: blur(8px);
@@ -88,14 +80,14 @@ html, body { height: 100%; background: #101010; font-family: -apple-system, 'SF 
 .menu-btn {
   width: 100%; padding: 16px; border: none; border-radius: 10px;
   font-size: 15px; font-weight: 600; cursor: pointer;
-  background: #222; color: #D0D0D0;
-  text-align: center; transition: background 0.12s;
+  background: #222; color: #D0D0D0; text-align: center; transition: background 0.12s;
 }
 .menu-btn.danger { color: #E03020; }
 .menu-btn.back   { background: #00A0E0; color: #101010; }
 
-/* ── Draw cursor on map ── */
+/* Edit mode overlay markers handled via Leaflet */
 #map.drawing { cursor: crosshair; }
+#map.editing  { cursor: pointer; }
 </style>
 </head>
 <body>
@@ -103,7 +95,6 @@ html, body { height: 100%; background: #101010; font-family: -apple-system, 'SF 
 <div id="map"></div>
 <canvas id="fog-canvas"></canvas>
 
-<!-- HUD -->
 <div id="hud">
   <div class="stat">
     <span class="stat-lbl">Distance</span>
@@ -121,78 +112,87 @@ html, body { height: 100%; background: #101010; font-family: -apple-system, 'SF 
 
 <button id="follow-btn" onclick="toggleFollow()">Follow</button>
 
-<!-- Bottom bar -->
 <div id="bottom">
-  <button id="main-btn" onclick="toggleTracking()">Use Location</button>
+  <button id="main-btn" onclick="toggleTracking()">Use location</button>
   <div id="sec-row">
-    <button class="sec-btn" id="menu-btn"  onclick="openMenu()">Menu</button>
-    <button class="sec-btn" id="draw-btn"  onclick="toggleDraw()">Draw Path</button>
+    <button class="sec-btn" id="menu-btn" onclick="menuBtnAction()">Menu</button>
+    <button class="sec-btn" id="draw-btn" onclick="drawBtnAction()">Draw path</button>
   </div>
 </div>
 
-<!-- Menu overlay -->
-<div id="menu-overlay">
+<div id="menu-overlay" onclick="onOverlayClick(event)">
   <div id="menu-panel">
     <button class="menu-btn back"   onclick="closeMenu()">Back</button>
     <button class="menu-btn"        onclick="menuSave()">Save</button>
-    <label  class="menu-btn" id="load-label">Load<input type="file" accept=".json" onchange="menuLoad(event)" style="display:none"></label>
-    <button class="menu-btn danger" onclick="menuClear()">Clear Data</button>
-    <button class="menu-btn" id="units-btn" onclick="toggleUnits()">Imperial Units</button>
+    <label  class="menu-btn"       >Load<input type="file" accept=".json" onchange="menuLoad(event)" style="display:none"></label>
+    <button class="menu-btn"        onclick="startEdit()">Edit</button>
+    <button class="menu-btn" id="units-btn" onclick="toggleUnits()">Imperial units</button>
+    <button class="menu-btn danger" onclick="menuClear()">Clear data</button>
   </div>
 </div>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
-// ── constants ────────────────────────────────────────────────────────────────
-const INNER_R_M    = 150;
-const MID_R_M      = 500;
-const FOG_OUTER    = 0.75;
-const FOG_MID      = 0.50;
-const MIN_DIST_M   = 8;
-const MIN_ACCURACY = 60;   // ignore GPS fixes worse than this (meters)
-const STORAGE_KEY  = 'explorer_trail_v1';
+// ── constants ─────────────────────────────────────────────────────────────────
+const INNER_R_M      = 100;   // fully clear radius
+const MID_R_M        = 300;   // semi-clear out to here
+const FOG_OUTER      = 0.93;  // nearly opaque beyond 300m
+const FOG_MID        = 0.50;  // 50% between 100-300m
+const MIN_DIST_M     = 8;     // min movement to record GPS point
+const MAX_ACCURACY_M = 100;   // reject GPS fixes worse than this
+const MAX_GAP_M      = 200;   // gap beyond which a new island is started
+const STORAGE_KEY    = 'exploration_v2';
 
-// ── state ────────────────────────────────────────────────────────────────────
-// trail is an array of SEGMENTS: [[{lat,lng}, ...], [...], ...]
-// Each segment is an independent island; no line is drawn between segments.
-let segments     = [];   // persisted
-let activeSegIdx = null; // index of segment currently being GPS-appended
+// ── state ─────────────────────────────────────────────────────────────────────
+// segments: Array of Array<{lat,lng}>  — each is an independent island
+// drawSegment: vertices of path being drawn (not yet committed)
+// editMarkers: Leaflet markers shown in edit mode, one per point
+
+let segments     = [];
+let activeSegIdx = null;  // which segment GPS is currently appending to
 let currentPos   = null;
 let tracking     = false;
 let watchId      = null;
 let followMe     = false;
-let drawMode     = false;
-let drawSegment  = [];   // vertices placed in current draw session
-let drawMarkers  = [];
-let drawPolyline = null;
-let posMarker    = null;
 let metric       = true;
 let totalDist    = 0;
 
-// ── load persisted data ───────────────────────────────────────────────────────
-(function loadStorage() {
+// draw mode
+let drawMode     = false;
+let drawSegment  = [];
+let drawMarkers  = [];
+let drawPolyline = null;
+
+// edit mode
+let editMode     = false;
+let editMarkers  = [];  // [{marker, segIdx, ptIdx}]
+
+// position marker
+let posMarker    = null;
+
+// ── persist ───────────────────────────────────────────────────────────────────
+(function init() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
-    if (!raw) return;
-    const data = JSON.parse(raw);
-    if (data.segments) segments = data.segments;
-    if (data.metric !== undefined) metric = data.metric;
-    totalDist = computeTotalDist();
+    if (raw) {
+      const d = JSON.parse(raw);
+      if (d.segments) segments = d.segments;
+      if (d.metric !== undefined) metric = d.metric;
+      totalDist = computeTotalDist();
+    }
   } catch(e) {}
 })();
 
 function saveStorage() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ segments, metric }));
-  } catch(e) {}
+  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ segments, metric })); } catch(e) {}
 }
 
 // ── map ───────────────────────────────────────────────────────────────────────
 const map = L.map('map', { center: [40,-20], zoom: 3, zoomControl: false, attributionControl: true });
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png', { maxZoom: 19 }).addTo(map);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png',  { maxZoom: 19, pane: 'shadowPane' }).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',   { maxZoom: 19 }).addTo(map);
+L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', { maxZoom: 19, pane: 'shadowPane' }).addTo(map);
 
-map.on('dragstart', () => { if (!drawMode) setFollow(false); });
+map.on('dragstart', () => { if (!drawMode && !editMode) setFollow(false); });
 map.on('move zoom resize viewreset', redrawFog);
 map.on('click', onMapClick);
 
@@ -202,17 +202,12 @@ const ctx    = canvas.getContext('2d');
 
 function resizeCanvas() {
   const r = document.getElementById('map').getBoundingClientRect();
-  canvas.width  = r.width;  canvas.height = r.height;
-  canvas.style.cssText = `position:absolute;top:${r.top}px;left:${r.left}px;width:${r.width}px;height:${r.height}px;pointer-events:none;z-index:400`;
+  canvas.width = r.width; canvas.height = r.height;
+  canvas.style.cssText = `position:absolute;top:${r.top}px;left:${r.left}px;` +
+    `width:${r.width}px;height:${r.height}px;pointer-events:none;z-index:400`;
 }
 
-// ── fog render ────────────────────────────────────────────────────────────────
-// Revealed areas should look LIGHT (map visible) against a dark fog.
-// The underlying tiles are now a light basemap; fog is a dark overlay.
-// Inner 150m: 0% fog (fully visible)
-// 150-500m:   50% fog
-// 500m+:      75% fog
-
+// ── fog ───────────────────────────────────────────────────────────────────────
 function metersToPixels(lat, m) {
   const p1 = map.latLngToContainerPoint([lat, 0]);
   const p2 = map.latLngToContainerPoint([lat + m / 111320, 0]);
@@ -220,24 +215,20 @@ function metersToPixels(lat, m) {
 }
 
 function buildMask(w, h, radiusM) {
-  // Returns an OffscreenCanvas with opaque pixels wherever trail points/segments are within radiusM
   const c = new OffscreenCanvas(w, h);
   const x = c.getContext('2d');
-  x.fillStyle = 'rgba(0,0,0,1)';
-  x.strokeStyle = 'rgba(0,0,0,1)';
+  x.fillStyle = x.strokeStyle = 'rgba(0,0,0,1)';
   x.lineJoin = 'round'; x.lineCap = 'round';
 
-  const allSegs = currentPos
-    ? [...segments, [currentPos]]
-    : segments;
+  // All committed segments + current GPS position (as its own single-point island)
+  const segs = currentPos ? [...segments, [currentPos]] : segments;
 
-  for (const seg of allSegs) {
-    if (seg.length === 0) continue;
+  for (const seg of segs) {
+    if (!seg.length) continue;
     const r = metersToPixels(seg[0].lat, radiusM);
     x.lineWidth = r * 2;
-    x.beginPath();
     const p0 = map.latLngToContainerPoint([seg[0].lat, seg[0].lng]);
-    x.arc(p0.x, p0.y, r, 0, Math.PI*2); x.fill();
+    x.beginPath(); x.arc(p0.x, p0.y, r, 0, Math.PI*2); x.fill();
     for (let i = 1; i < seg.length; i++) {
       const pa = map.latLngToContainerPoint([seg[i-1].lat, seg[i-1].lng]);
       const pb = map.latLngToContainerPoint([seg[i].lat,   seg[i].lng]);
@@ -251,43 +242,39 @@ function buildMask(w, h, radiusM) {
 function redrawFog() {
   resizeCanvas();
   const w = canvas.width, h = canvas.height;
+  const f = new OffscreenCanvas(w, h);
+  const fc = f.getContext('2d');
 
-  const final = new OffscreenCanvas(w, h);
-  const f = final.getContext('2d');
+  // Outer fog
+  fc.fillStyle = `rgba(14,14,14,${FOG_OUTER})`;
+  fc.fillRect(0, 0, w, h);
 
-  // 1. Full outer fog
-  f.fillStyle = `rgba(14,14,14,${FOG_OUTER})`;
-  f.fillRect(0, 0, w, h);
+  const segs = currentPos ? [...segments, [currentPos]] : segments;
+  if (!segs.some(s => s.length > 0)) { ctx.clearRect(0,0,w,h); ctx.drawImage(f,0,0); return; }
 
-  const allSegs = currentPos ? [...segments, [currentPos]] : segments;
-  const hasData = allSegs.some(s => s.length > 0);
-  if (!hasData) { ctx.clearRect(0,0,w,h); ctx.drawImage(final,0,0); return; }
-
-  // 2. Build mid mask (500m) and inner mask (150m)
   const midMask   = buildMask(w, h, MID_R_M);
   const innerMask = buildMask(w, h, INNER_R_M);
 
-  // 3. Where midMask is opaque → replace outer fog with mid fog
-  const midFogLayer = new OffscreenCanvas(w, h);
-  const mf = midFogLayer.getContext('2d');
-  mf.drawImage(midMask, 0, 0);
-  mf.globalCompositeOperation = 'source-in';
-  mf.fillStyle = `rgba(14,14,14,${FOG_MID})`;
-  mf.fillRect(0, 0, w, h);
+  // Mid-fog layer clipped to midMask
+  const midLayer = new OffscreenCanvas(w, h);
+  const mc = midLayer.getContext('2d');
+  mc.drawImage(midMask, 0, 0);
+  mc.globalCompositeOperation = 'source-in';
+  mc.fillStyle = `rgba(14,14,14,${FOG_MID})`;
+  mc.fillRect(0, 0, w, h);
 
-  // Replace the outer-fog pixels in the mid zone
-  f.globalCompositeOperation = 'destination-out';
-  f.drawImage(midMask, 0, 0);
-  f.globalCompositeOperation = 'source-over';
-  f.drawImage(midFogLayer, 0, 0);
+  // Replace outer with mid in mid zone
+  fc.globalCompositeOperation = 'destination-out';
+  fc.drawImage(midMask, 0, 0);
+  fc.globalCompositeOperation = 'source-over';
+  fc.drawImage(midLayer, 0, 0);
 
-  // 4. Punch inner zone fully clear
-  f.globalCompositeOperation = 'destination-out';
-  f.drawImage(innerMask, 0, 0);
+  // Punch inner fully clear
+  fc.globalCompositeOperation = 'destination-out';
+  fc.drawImage(innerMask, 0, 0);
 
-  // 5. Blit
   ctx.clearRect(0, 0, w, h);
-  ctx.drawImage(final, 0, 0);
+  ctx.drawImage(f, 0, 0);
 }
 
 // ── GPS tracking ──────────────────────────────────────────────────────────────
@@ -298,10 +285,9 @@ function toggleTracking() {
 function startTracking() {
   if (!navigator.geolocation) return;
   tracking = true;
-  activeSegIdx = null; // will be set on first valid fix
+  activeSegIdx = null;
   setFollow(true);
   updateUI();
-
   watchId = navigator.geolocation.watchPosition(onPosition, onGpsError,
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
 }
@@ -309,8 +295,9 @@ function startTracking() {
 function stopTracking() {
   if (watchId != null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
   tracking = false;
-  currentPos = null;
   activeSegIdx = null;
+  // Do NOT clear currentPos from the map immediately — just stop updating
+  currentPos = null;
   if (posMarker) { map.removeLayer(posMarker); posMarker = null; }
   document.getElementById('s-acc-wrap').style.display = 'none';
   document.getElementById('follow-btn').style.display = 'none';
@@ -322,40 +309,37 @@ function stopTracking() {
 function onPosition(pos) {
   const { latitude: lat, longitude: lng, accuracy: acc } = pos.coords;
 
-  // Update accuracy display
+  // Update accuracy display regardless
   const accEl = document.getElementById('s-acc');
-  accEl.textContent = metric ? `±${Math.round(acc)}m` : `±${Math.round(acc * 3.281)}ft`;
-  accEl.className = 'stat-val ' + (acc < 20 ? 'good' : acc < MIN_ACCURACY ? 'warn' : 'bad');
+  const accM  = Math.round(acc);
+  accEl.textContent = metric ? `±${accM} m` : `±${Math.round(acc*3.281)} ft`;
+  accEl.className = 'stat-val ' + (acc < 50 ? 'good' : acc < 100 ? 'warn' : 'bad');
   document.getElementById('s-acc-wrap').style.display = 'flex';
 
-  // Ignore very inaccurate fixes
-  if (acc > MIN_ACCURACY) return;
-
-  currentPos = { lat, lng };
-
-  // Position marker
-  const icon = L.divIcon({
-    className: '',
-    html: `<div style="width:14px;height:14px;border-radius:50%;background:#00A0E0;border:3px solid #F0F0F0;box-shadow:0 0 0 4px rgba(0,160,224,0.25)"></div>`,
-    iconAnchor: [7,7],
-  });
-  if (posMarker) posMarker.setLatLng([lat, lng]);
-  else posMarker = L.marker([lat, lng], { icon, zIndexOffset: 1000 }).addTo(map);
-
+  // Always show blue dot at estimated position
+  updatePosMarker(lat, lng);
   if (followMe) map.setView([lat, lng], Math.max(map.getZoom(), 16), { animate: true, duration: 0.5 });
 
-  // Append to current segment — only if moved enough from last point
+  // Only reveal map if accuracy is good enough
+  if (acc >= MAX_ACCURACY_M) return;
+
+  // Island logic: if no active segment, or gap is too large, start a new island
   if (activeSegIdx === null) {
-    // Start a brand new segment (island) — no connection to prior trail
     segments.push([{ lat, lng }]);
     activeSegIdx = segments.length - 1;
   } else {
-    const seg = segments[activeSegIdx];
+    const seg  = segments[activeSegIdx];
     const last = seg[seg.length - 1];
-    const d = haversine(last.lat, last.lng, lat, lng);
+    const d    = haversine(last.lat, last.lng, lat, lng);
     if (d < MIN_DIST_M) return;
-    totalDist += d;
-    seg.push({ lat, lng });
+    if (d >= MAX_GAP_M) {
+      // Large gap — start a new island rather than connecting
+      segments.push([{ lat, lng }]);
+      activeSegIdx = segments.length - 1;
+    } else {
+      totalDist += d;
+      seg.push({ lat, lng });
+    }
   }
 
   saveStorage();
@@ -363,13 +347,29 @@ function onPosition(pos) {
   redrawFog();
 }
 
-function onGpsError(err) {
-  stopTracking();
+function onGpsError() { stopTracking(); }
+
+function updatePosMarker(lat, lng) {
+  const icon = L.divIcon({
+    className: '',
+    html: `<div style="width:14px;height:14px;border-radius:50%;background:#00A0E0;border:3px solid #F0F0F0;box-shadow:0 0 0 4px rgba(0,160,224,0.25)"></div>`,
+    iconAnchor: [7,7],
+  });
+  if (posMarker) posMarker.setLatLng([lat, lng]);
+  else posMarker = L.marker([lat, lng], { icon, zIndexOffset: 1000 }).addTo(map);
 }
 
-// ── draw mode ─────────────────────────────────────────────────────────────────
-function toggleDraw() {
-  drawMode ? confirmDraw() : startDraw();
+// ── draw path mode ────────────────────────────────────────────────────────────
+function drawBtnAction() {
+  if (drawMode)      doneDraw();
+  else if (editMode) doneEdit();
+  else               startDraw();
+}
+
+function menuBtnAction() {
+  if (drawMode)      undoDraw();
+  else if (editMode) undoEdit();
+  else               openMenu();
 }
 
 function startDraw() {
@@ -379,12 +379,10 @@ function startDraw() {
   updateUI();
 }
 
-function confirmDraw() {
-  // Commit drawn segment as a new independent segment
+function doneDraw() {
+  // Commit drawn segment as a new independent island (no connection to existing trail)
   if (drawSegment.length > 0) {
-    // Interpolate all consecutive vertex pairs
-    const pts = [];
-    pts.push(drawSegment[0]);
+    const pts = [drawSegment[0]];
     for (let i = 1; i < drawSegment.length; i++) {
       pts.push(...interpolate(drawSegment[i-1], drawSegment[i], 30));
     }
@@ -412,24 +410,96 @@ function undoDraw() {
 
 function endDraw() {
   drawMode = false;
-  drawMarkers.forEach(m => map.removeLayer(m));
-  drawMarkers = [];
+  drawMarkers.forEach(m => map.removeLayer(m)); drawMarkers = [];
   if (drawPolyline) { map.removeLayer(drawPolyline); drawPolyline = null; }
   drawSegment = [];
   document.getElementById('map').classList.remove('drawing');
   updateUI();
 }
 
+// ── edit mode ─────────────────────────────────────────────────────────────────
+function startEdit() {
+  closeMenu();
+  // Stop location if on
+  if (tracking) stopTracking();
+  editMode = true;
+  document.getElementById('map').classList.add('editing');
+  showEditMarkers();
+  updateUI();
+}
+
+function showEditMarkers() {
+  clearEditMarkers();
+  segments.forEach((seg, si) => {
+    seg.forEach((pt, pi) => {
+      const icon = L.divIcon({
+        className: '',
+        html: `<div style="width:22px;height:22px;border-radius:50%;background:#00A0E0;border:3px solid #F0F0F0;box-shadow:0 0 8px rgba(0,160,224,0.6);cursor:pointer"></div>`,
+        iconAnchor: [11,11],
+      });
+      const marker = L.marker([pt.lat, pt.lng], { icon, zIndexOffset: 900 }).addTo(map);
+      marker.on('click', (e) => {
+        L.DomEvent.stopPropagation(e);
+        removePoint(si, pi);
+      });
+      editMarkers.push({ marker, segIdx: si, ptIdx: pi });
+    });
+  });
+}
+
+function clearEditMarkers() {
+  editMarkers.forEach(e => map.removeLayer(e.marker));
+  editMarkers = [];
+}
+
+function removePoint(segIdx, ptIdx) {
+  const seg = segments[segIdx];
+  if (!seg) return;
+
+  // Split segment at this point — removing the point and any segments connected to it.
+  // Points before it form one sub-segment, points after form another.
+  const before = seg.slice(0, ptIdx);
+  const after  = seg.slice(ptIdx + 1);
+
+  const newSegs = [];
+  if (before.length > 0) newSegs.push(before);
+  if (after.length  > 0) newSegs.push(after);
+
+  segments.splice(segIdx, 1, ...newSegs);
+
+  // Recompute distance from scratch
+  totalDist = computeTotalDist();
+  saveStorage();
+  updateStats();
+
+  // Rebuild all edit markers (indices changed)
+  showEditMarkers();
+  redrawFog();
+}
+
+function undoEdit() {
+  // Undo not tracked point-by-point here; treat as done
+  doneEdit();
+}
+
+function doneEdit() {
+  editMode = false;
+  clearEditMarkers();
+  document.getElementById('map').classList.remove('editing');
+  updateUI();
+  redrawFog();
+}
+
+// ── map click ─────────────────────────────────────────────────────────────────
 function onMapClick(e) {
   if (!drawMode) return;
   const pt = { lat: e.latlng.lat, lng: e.latlng.lng };
   drawSegment.push(pt);
 
-  // Vertex marker — larger for easier tapping (but tapping no longer undoes)
   const icon = L.divIcon({
     className: '',
-    html: `<div style="width:16px;height:16px;border-radius:50%;background:#00A0E0;border:3px solid #F0F0F0;box-shadow:0 0 8px rgba(0,160,224,0.5)"></div>`,
-    iconAnchor: [8,8],
+    html: `<div style="width:18px;height:18px;border-radius:50%;background:#00A0E0;border:3px solid #F0F0F0;box-shadow:0 0 8px rgba(0,160,224,0.5)"></div>`,
+    iconAnchor: [9,9],
   });
   drawMarkers.push(L.marker([pt.lat, pt.lng], { icon }).addTo(map));
 
@@ -442,18 +512,20 @@ function onMapClick(e) {
 
 // ── menu ──────────────────────────────────────────────────────────────────────
 function openMenu() {
+  document.getElementById('units-btn').textContent = metric ? 'Imperial units' : 'Metric units';
   document.getElementById('menu-overlay').classList.add('open');
-  document.getElementById('units-btn').textContent = metric ? 'Imperial Units' : 'Metric Units';
 }
 function closeMenu() {
   document.getElementById('menu-overlay').classList.remove('open');
 }
+function onOverlayClick(e) {
+  if (e.target === document.getElementById('menu-overlay')) closeMenu();
+}
 function menuSave() {
   closeMenu();
-  const data = JSON.stringify({ version: 4, segments });
   const a = Object.assign(document.createElement('a'), {
-    href: URL.createObjectURL(new Blob([data], { type: 'application/json' })),
-    download: 'explorer-data.json',
+    href: URL.createObjectURL(new Blob([JSON.stringify({ version: 5, segments })], { type: 'application/json' })),
+    download: 'exploration-data.json',
   });
   a.click();
 }
@@ -462,16 +534,10 @@ function menuLoad(e) {
   const reader = new FileReader();
   reader.onload = ev => {
     try {
-      const data = JSON.parse(ev.target.result);
-      // Support old format (flat trail array) and new (segments)
-      if (data.segments) {
-        segments = data.segments;
-      } else if (data.trail) {
-        segments = [data.trail];
-      }
+      const d = JSON.parse(ev.target.result);
+      segments  = d.segments || (d.trail ? [d.trail] : []);
       totalDist = computeTotalDist();
-      updateStats();
-      saveStorage();
+      updateStats(); saveStorage();
       const last = segments.flatMap(s=>s).pop();
       if (last) map.setView([last.lat, last.lng], 12);
       redrawFog();
@@ -481,20 +547,20 @@ function menuLoad(e) {
   e.target.value = '';
   closeMenu();
 }
-function menuClear() {
-  if (!confirm('Clear all data?')) return;
-  stopTracking();
-  segments = []; totalDist = 0; currentPos = null;
-  endDraw();
-  saveStorage();
-  updateStats();
-  redrawFog();
-  closeMenu();
-}
 function toggleUnits() {
   metric = !metric;
+  document.getElementById('units-btn').textContent = metric ? 'Imperial units' : 'Metric units';
   saveStorage();
   updateStats();
+  // Do NOT close menu (step 9)
+}
+function menuClear() {
+  if (!confirm('Clear all data?')) return;
+  if (tracking) stopTracking();
+  if (drawMode) endDraw();
+  if (editMode) doneEdit();
+  segments = []; totalDist = 0; currentPos = null;
+  saveStorage(); updateStats(); redrawFog();
   closeMenu();
 }
 
@@ -502,32 +568,42 @@ function toggleUnits() {
 function setFollow(val) {
   followMe = val;
   const btn = document.getElementById('follow-btn');
-  btn.textContent = 'Follow';
-  btn.classList.toggle('active', val);
+  btn.textContent = val ? 'Following' : 'Follow';
+  btn.className   = val ? 'active' : '';
 }
 function toggleFollow() { setFollow(!followMe); }
 
-// ── UI state ──────────────────────────────────────────────────────────────────
+// ── UI ────────────────────────────────────────────────────────────────────────
 function updateUI() {
   const mainBtn = document.getElementById('main-btn');
   const menuBtn = document.getElementById('menu-btn');
   const drawBtn = document.getElementById('draw-btn');
   const followBtn = document.getElementById('follow-btn');
 
-  if (drawMode) {
+  if (editMode) {
+    // Location off and grayed, menu replaced by Undo, draw replaced by Done
     mainBtn.disabled = true;
+    mainBtn.textContent = 'Use location';
+    mainBtn.className = '';
     menuBtn.textContent = 'Undo';
-    menuBtn.onclick = undoDraw;
-    drawBtn.textContent = 'Confirm';
+    drawBtn.textContent = 'Done';
     drawBtn.classList.add('active');
     followBtn.style.display = 'none';
+  } else if (drawMode) {
+    // Location still accessible, menu → Undo, draw → Done
+    mainBtn.disabled = false;
+    mainBtn.textContent = tracking ? 'Stop tracking' : 'Use location';
+    mainBtn.className = tracking ? 'tracking' : '';
+    menuBtn.textContent = 'Undo';
+    drawBtn.textContent = 'Done';
+    drawBtn.classList.add('active');
+    followBtn.style.display = tracking ? 'block' : 'none';
   } else {
     mainBtn.disabled = false;
-    mainBtn.textContent = tracking ? 'Stop Tracking' : 'Use Location';
+    mainBtn.textContent = tracking ? 'Stop tracking' : 'Use location';
     mainBtn.className = tracking ? 'tracking' : '';
     menuBtn.textContent = 'Menu';
-    menuBtn.onclick = openMenu;
-    drawBtn.textContent = 'Draw Path';
+    drawBtn.textContent = 'Draw path';
     drawBtn.classList.remove('active');
     followBtn.style.display = tracking ? 'block' : 'none';
   }
@@ -536,13 +612,11 @@ function updateUI() {
 // ── stats ─────────────────────────────────────────────────────────────────────
 function updateStats() {
   document.getElementById('s-dist').textContent = fmtDist(totalDist);
-  // Area: sum of all segment lengths × 2 × INNER_R_M (rough corridor area)
-  const areaSqM = computeArea();
-  document.getElementById('s-area').textContent = fmtArea(areaSqM);
+  document.getElementById('s-area').textContent = fmtArea(computeArea());
 }
 
 function computeTotalDist() {
-  return segments.reduce((sum, seg) => sum + segmentLength(seg), 0);
+  return segments.reduce((s, seg) => s + segmentLength(seg), 0);
 }
 
 function segmentLength(seg) {
@@ -552,8 +626,21 @@ function segmentLength(seg) {
 }
 
 function computeArea() {
-  // Approximate as corridor: total length × diameter (2 × inner radius)
-  return computeTotalDist() * (INNER_R_M * 2);
+  // Corridor area: each segment contributes length × 2r + circle at each end.
+  // For isolated points (length=0) it's just π r².
+  // This approximates the fully revealed (inner) corridor area.
+  const r = INNER_R_M;
+  let area = 0;
+  for (const seg of segments) {
+    if (seg.length === 0) continue;
+    area += Math.PI * r * r; // start cap
+    for (let i = 1; i < seg.length; i++) {
+      const d = haversine(seg[i-1].lat, seg[i-1].lng, seg[i].lat, seg[i].lng);
+      area += d * 2 * r;      // corridor strip
+      area += Math.PI * r * r; // end cap per point (slight overcount but acceptable)
+    }
+  }
+  return area;
 }
 
 function fmtDist(m) {
@@ -563,16 +650,22 @@ function fmtDist(m) {
 }
 
 function fmtArea(sqm) {
-  if (metric) return sqm >= 1000000 ? `${(sqm/1000000).toFixed(2)} km²` : sqm >= 10000 ? `${(sqm/10000).toFixed(1)} ha` : `${Math.round(sqm)} m²`;
+  if (metric) {
+    if (sqm >= 1e6)  return `${(sqm/1e6).toFixed(2)} km²`;
+    if (sqm >= 1e4)  return `${(sqm/1e4).toFixed(1)} ha`;
+    return `${Math.round(sqm)} m²`;
+  }
   const sqft = sqm * 10.764;
-  return sqft >= 27878400 ? `${(sqft/27878400).toFixed(2)} mi²` : sqft >= 43560 ? `${(sqft/43560).toFixed(1)} ac` : `${Math.round(sqft)} ft²`;
+  if (sqft >= 27878400) return `${(sqft/27878400).toFixed(2)} mi²`;
+  if (sqft >= 43560)    return `${(sqft/43560).toFixed(1)} ac`;
+  return `${Math.round(sqft)} ft²`;
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 function haversine(lat1, lng1, lat2, lng2) {
   const R = 6371000, dL = (lat2-lat1)*Math.PI/180, dG = (lng2-lng1)*Math.PI/180;
   const a = Math.sin(dL/2)**2 + Math.cos(lat1*Math.PI/180)*Math.cos(lat2*Math.PI/180)*Math.sin(dG/2)**2;
-  return R*2*Math.atan2(Math.sqrt(a),Math.sqrt(1-a));
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
 }
 
 function interpolate(a, b, stepM) {
