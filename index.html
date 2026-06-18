@@ -9,7 +9,6 @@
 <title>Hexploration</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-
   :root {
     --bg:      #101010;
     --surface: #202020;
@@ -20,7 +19,6 @@
     --bar-h:   112px;
     --safe-b:  env(safe-area-inset-bottom, 0px);
   }
-
   html, body {
     width: 100%; height: 100%; overflow: hidden;
     background: var(--bg);
@@ -28,11 +26,19 @@
     color: var(--text);
     user-select: none; -webkit-user-select: none;
   }
-
   #map {
     position: fixed; inset: 0;
     bottom: calc(var(--bar-h) + var(--safe-b));
   }
+  /* SVG fog — fixed, sits over the map, ignored by pointer events */
+  #fog-svg {
+    position: fixed; inset: 0;
+    bottom: calc(var(--bar-h) + var(--safe-b));
+    pointer-events: none;
+    z-index: 450;
+  }
+  /* In select mode, the SVG accepts pointer events so hexes are clickable */
+  #fog-svg.select-mode { pointer-events: all; }
 
   /* ── Bottom bar ── */
   #bar {
@@ -43,27 +49,19 @@
     display: flex; flex-direction: column; align-items: center;
     padding: 12px 14px calc(12px + var(--safe-b));
     gap: 10px;
-    z-index: 100;
+    z-index: 500;
   }
-
   #status-line {
-    font-size: 18px;
-    font-weight: 600;
-    color: var(--accent);
-    letter-spacing: .01em;
-    padding: 0 8px;
+    font-size: 18px; font-weight: 600;
+    color: var(--accent); letter-spacing: .01em;
+    padding: 2px 8px;
   }
-
-  #btn-row {
-    display: flex; gap: 10px; width: 100%;
-  }
-
+  #btn-row { display: flex; gap: 10px; width: 100%; }
   .bar-btn {
     flex: 1; height: 52px;
     border: none; outline: none; border-radius: 14px;
     background: var(--muted); color: var(--text);
-    font-size: 15px; font-weight: 600;
-    cursor: pointer;
+    font-size: 15px; font-weight: 600; cursor: pointer;
     transition: background .15s, transform .1s;
     -webkit-appearance: none;
   }
@@ -72,15 +70,9 @@
   .bar-btn.done-btn { background: var(--accent); }
 
   /* ── Menu sheet ── */
-  #menu-overlay {
-    display: none; position: fixed; inset: 0; z-index: 200;
-  }
+  #menu-overlay { display: none; position: fixed; inset: 0; z-index: 600; }
   #menu-overlay.open { display: block; }
-
-  #menu-backdrop {
-    position: absolute; inset: 0; background: rgba(0,0,0,.5);
-  }
-
+  #menu-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.5); }
   #menu-sheet {
     position: absolute; left: 0; right: 0; bottom: 0;
     background: var(--surface);
@@ -88,12 +80,10 @@
     padding: 14px 16px calc(16px + var(--safe-b));
     display: flex; flex-direction: column; gap: 10px;
   }
-
   #menu-handle {
     width: 40px; height: 4px; border-radius: 2px;
     background: var(--muted); align-self: center; margin-bottom: 4px;
   }
-
   .menu-btn {
     width: 100%; height: 54px;
     border: none; outline: none; border-radius: 14px;
@@ -108,12 +98,11 @@
 
   /* ── Confirm dialog ── */
   #confirm-overlay {
-    display: none; position: fixed; inset: 0; z-index: 300;
+    display: none; position: fixed; inset: 0; z-index: 700;
     background: rgba(0,0,0,.65);
     align-items: center; justify-content: center;
   }
   #confirm-overlay.open { display: flex; }
-
   #confirm-box {
     background: var(--surface); border-radius: 20px;
     padding: 28px 20px 20px;
@@ -121,7 +110,6 @@
     display: flex; flex-direction: column; gap: 16px; align-items: center;
   }
   #confirm-box p { font-size: 20px; font-weight: 700; text-align: center; }
-
   .confirm-row { display: flex; gap: 10px; width: 100%; }
   .confirm-row button {
     flex: 1; height: 50px;
@@ -136,6 +124,9 @@
 <body>
 
 <div id="map"></div>
+
+<!-- Fog SVG: fixed over the map, re-drawn each frame in JS using container coords -->
+<svg id="fog-svg" xmlns="http://www.w3.org/2000/svg"></svg>
 
 <div id="bar">
   <div id="status-line">0 hexagons</div>
@@ -169,52 +160,56 @@
 
 <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
-
 <script>
 'use strict';
 
-/* ═══════════════════════════════════════════════════════════
-   HEX CONSTANTS
-   Pointy-top hexagons, 100 m flat-to-flat (short diameter).
-   circumradius  R = 100/√3 ≈ 57.735 m
-   col spacing   w = √3·R = 100 m
-   row spacing   h = 1.5·R ≈ 86.6 m
+/* ═══════════════════════════════════════════════════
+   HEX MATH
+   Pointy-top hexagons, 100 m flat-to-flat.
+   Circumradius R = 100/√3 m.
 
-   Axial (q,r) → metres from origin (0,0 lat/lng):
-     mx = R·√3·(q + r/2)
+   Axial (q,r) ↔ metres from geographic origin (0°,0°):
+     mx = R√3·(q + r/2)
      my = R·1.5·r
    Inverse:
-     r  = my·2/(3·R)
-     q  = mx/(R·√3) − r/2
-═══════════════════════════════════════════════════════════ */
-const R   = 100 / Math.sqrt(3);   // circumradius in metres ≈ 57.735
-const MPD = 111320;                // metres per degree latitude (constant)
+     r  = my·2/(3R)
+     q  = mx/(R√3) − r/2
+
+   We use the geographic origin (lat=0,lng=0) as the axial
+   origin so hex keys are globally stable regardless of where
+   the map is panned.  We apply a per-point cosine correction
+   when converting geographic coords to/from metres.
+═══════════════════════════════════════════════════ */
+const R   = 100 / Math.sqrt(3); // circumradius metres ≈ 57.735
+const MPD = 111320;             // metres per degree latitude
 
 function mpdLon(lat) { return MPD * Math.cos(lat * Math.PI / 180); }
 
-// LatLng → metres (using lat for cosine correction, good for small areas)
+// LatLng → flat-earth metres from (0°,0°)
+// We linearise around the point itself for the longitude scale — good to ~1 m
+// accuracy anywhere on Earth for our 100 m hex size.
 function ll2m(lat, lng) {
   return { mx: lng * mpdLon(lat), my: lat * MPD };
 }
 
 // Metres → fractional axial
 function m2fax(mx, my) {
-  const fr = my * 2 / (3 * R);
+  const fr = (my * 2) / (3 * R);
   const fq = mx / (Math.sqrt(3) * R) - fr / 2;
   return { fq, fr };
 }
 
-// Fractional axial → rounded axial (cube rounding)
+// Cube-coordinate rounding
 function axRound(fq, fr) {
   const fs = -fq - fr;
   let q = Math.round(fq), r = Math.round(fr), s = Math.round(fs);
-  const dq = Math.abs(q-fq), dr = Math.abs(r-fr), ds = Math.abs(s-fs);
-  if (dq > dr && dq > ds)    q = -r - s;
-  else if (dr > ds)           r = -q - s;
+  const dq = Math.abs(q - fq), dr = Math.abs(r - fr), ds = Math.abs(s - fs);
+  if      (dq > dr && dq > ds) q = -r - s;
+  else if (dr > ds)            r = -q - s;
   return { q, r };
 }
 
-// LatLng → hex key
+// LatLng → "q,r" hex key
 function ll2key(lat, lng) {
   const { mx, my } = ll2m(lat, lng);
   const { fq, fr } = m2fax(mx, my);
@@ -227,387 +222,265 @@ function ax2ll(q, r) {
   const mx  = R * Math.sqrt(3) * (q + r / 2);
   const my  = R * 1.5 * r;
   const lat = my / MPD;
-  const lng = mx / mpdLon(lat || 1e-10);
-  return L.latLng(lat, lng);
+  // Avoid divide-by-zero at equator edge case
+  const lng = mx / mpdLon(lat === 0 ? 1e-9 : lat);
+  return { lat, lng };
 }
 
-// Axial → 6 corner LatLngs (pointy-top, first corner at -30°)
-function hexCorners(q, r) {
-  const ctr = ax2ll(q, r);
+// Axial → array of 6 {lat,lng} corners (pointy-top)
+function hexCornerLatLngs(q, r) {
+  const { lat: cLat, lng: cLng } = ax2ll(q, r);
   const pts = [];
   for (let i = 0; i < 6; i++) {
-    const ang = (Math.PI / 180) * (60 * i - 30);
-    const lat = ctr.lat + R * Math.sin(ang) / MPD;
-    const lng = ctr.lng + R * Math.cos(ang) / mpdLon(ctr.lat);
-    pts.push(L.latLng(lat, lng));
+    const ang = Math.PI / 180 * (60 * i - 30); // pointy-top: corners at ±30°,±90°,±150°
+    pts.push({
+      lat: cLat + R * Math.sin(ang) / MPD,
+      lng: cLng + R * Math.cos(ang) / mpdLon(cLat || 1e-9),
+    });
   }
   return pts;
 }
 
-// Axial neighbours
+// 6 corners → SVG "M x,y L x,y … Z" using container pixel coords
+function cornersToPx(corners) {
+  return 'M ' + corners.map(({ lat, lng }) => {
+    const p = map.latLngToContainerPoint(L.latLng(lat, lng));
+    return `${p.x.toFixed(1)},${p.y.toFixed(1)}`;
+  }).join(' L ') + ' Z';
+}
+
+// Axial neighbours (pointy-top)
 function nbrs(q, r) {
   return [[q+1,r],[q-1,r],[q,r+1],[q,r-1],[q+1,r-1],[q-1,r+1]];
 }
 
 function hk(q, r) { return `${q},${r}`; }
-function parseKey(k) { const [q,r] = k.split(',').map(Number); return {q,r}; }
+function parseKey(k) { const [q, r] = k.split(',').map(Number); return { q, r }; }
 
-/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
+   MAP
+═══════════════════════════════════════════════════ */
+const map = L.map('map', {
+  center: [20, 0], zoom: 3,
+  zoomControl: false, attributionControl: true,
+});
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors', maxZoom: 19,
+}).addTo(map);
+
+/* ═══════════════════════════════════════════════════
    STATE
-═══════════════════════════════════════════════════════════ */
-let revealed   = new Set();   // "q,r"
+═══════════════════════════════════════════════════ */
+let revealed   = new Set();
 let trackingOn = false;
 let selectMode = false;
 let userLL     = null;
 let userAcc    = null;
 let watchId    = null;
-let hasSnapped = false;       // snap to user once on first fix
+let hasSnapped = false;
 
-/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    STORAGE
-═══════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════ */
 const SK = 'hexploration_v1';
-function store() { try { localStorage.setItem(SK, JSON.stringify([...revealed])); } catch(e){} }
-function load()  { try { const r = localStorage.getItem(SK); if (r) revealed = new Set(JSON.parse(r)); } catch(e){} }
+function store() { try { localStorage.setItem(SK, JSON.stringify([...revealed])); } catch(e) {} }
+function load()  { try { const d = localStorage.getItem(SK); if (d) revealed = new Set(JSON.parse(d)); } catch(e) {} }
 load();
 
-/* ═══════════════════════════════════════════════════════════
-   MAP
-═══════════════════════════════════════════════════════════ */
-const map = L.map('map', {
-  center: [20, 0], zoom: 3,
-  zoomControl: false, attributionControl: true,
-  preferCanvas: false,
-});
+/* ═══════════════════════════════════════════════════
+   FOG SVG RENDERER
 
-L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap contributors', maxZoom: 19,
-}).addTo(map);
+   The SVG is position:fixed, same size as the map area,
+   so latLngToContainerPoint() gives correct pixel coords
+   directly — no pane transform interference.
 
-/* ═══════════════════════════════════════════════════════════
-   SVG OVERLAY — the core rendering strategy
+   We draw two stacked evenodd paths:
+     Pass 1 — world rect minus revealed            → borderOp (0.5)
+     Pass 2 — world rect minus revealed minus border → extra (fogOp − borderOp)
+   Net opacity:  revealed=0  border=0.5  other=fogOp ✓
 
-   We use a custom Leaflet SVG layer that Leaflet re-projects
-   automatically on every pan/zoom, so there is zero JS delay.
+   On every map move/zoom we simply redraw all paths
+   (just string construction + setAttribute, no DOM create/delete
+   except once when the data changes).
+═══════════════════════════════════════════════════ */
+const fogSvg   = document.getElementById('fog-svg');
+const NS       = 'http://www.w3.org/2000/svg';
 
-   The overlay draws:
-   1. A full-viewport dark rectangle at fog opacity
-   2. clipPath holes for every revealed hex (opacity 0)
-   3. Individual border hexagons at 50% opacity on top
-   4. In select mode, individual clickable polys for all visible
+// Persistent SVG path elements — created once, updated each frame
+let svgPath1   = null; // borderOp layer
+let svgPath2   = null; // extra layer
+let svgOutlines = [];  // stroke outlines for revealed+border hexes
 
-   At high zoom we also draw individual polys for the visible
-   viewport so the user can click to toggle in select mode.
-═══════════════════════════════════════════════════════════ */
+// Cache of border set (recomputed only when revealed changes)
+let borderCache = null;
 
-// Build border set (keys of unrevealed hexes adjacent to revealed)
-function borderSet() {
-  const b = new Set();
+function getBorders() {
+  if (borderCache) return borderCache;
+  borderCache = new Set();
   for (const k of revealed) {
-    const {q,r} = parseKey(k);
-    for (const [nq,nr] of nbrs(q,r)) {
-      const nk = hk(nq,nr);
-      if (!revealed.has(nk)) b.add(nk);
+    const { q, r } = parseKey(k);
+    for (const [nq, nr] of nbrs(q, r)) {
+      const nk = hk(nq, nr);
+      if (!revealed.has(nk)) borderCache.add(nk);
     }
   }
-  return b;
+  return borderCache;
 }
 
-/* ── Custom Leaflet layer ── */
-const FogLayer = L.Layer.extend({
-  onAdd(map) {
-    this._map = map;
-    // Create SVG that Leaflet manages
-    this._svg = L.SVG.create('svg');
-    this._svg.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:400;';
-    map.getPanes().overlayPane.appendChild(this._svg);
+function invalidateBorders() { borderCache = null; }
 
-    // click layer for select mode — separate from SVG so pointer-events work
-    this._clickGroup = L.layerGroup().addTo(map);
+// Build the giant "world box + hex holes" evenodd path string
+// holeKeys = Set of keys to punch out as holes
+const WORLD = 'M -99999,-99999 L 99999,-99999 L 99999,99999 L -99999,99999 Z ';
+function buildEvenOddPath(holeKeys) {
+  let d = WORLD;
+  for (const k of holeKeys) {
+    const { q, r } = parseKey(k);
+    d += cornersToPx(hexCornerLatLngs(q, r)) + ' ';
+  }
+  return d;
+}
 
-    map.on('viewreset moveend zoomend', this._redraw, this);
-    map.on('move zoom',                 this._reproject, this);
-    this._redraw();
-  },
+function ensureSvgElements() {
+  if (!svgPath1) {
+    svgPath1 = document.createElementNS(NS, 'path');
+    svgPath1.setAttribute('fill-rule', 'evenodd');
+    svgPath1.setAttribute('fill', '#101010');
+    svgPath1.setAttribute('pointer-events', 'none');
+    fogSvg.appendChild(svgPath1);
+  }
+  if (!svgPath2) {
+    svgPath2 = document.createElementNS(NS, 'path');
+    svgPath2.setAttribute('fill-rule', 'evenodd');
+    svgPath2.setAttribute('fill', '#101010');
+    svgPath2.setAttribute('pointer-events', 'none');
+    fogSvg.appendChild(svgPath2);
+  }
+}
 
-  onRemove(map) {
-    map.getPanes().overlayPane.removeChild(this._svg);
-    this._clickGroup.clearLayers();
-    map.off('viewreset moveend zoomend', this._redraw, this);
-    map.off('move zoom',                 this._reproject, this);
-  },
+// Outline elements pool (reused)
+function syncOutlines(keys) {
+  const arr = [...keys];
+  // Grow pool if needed
+  while (svgOutlines.length < arr.length) {
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('fill', 'none');
+    p.setAttribute('stroke', '#404040');
+    p.setAttribute('stroke-width', '0.8');
+    p.setAttribute('stroke-opacity', '0.6');
+    p.setAttribute('pointer-events', 'none');
+    fogSvg.appendChild(p);
+    svgOutlines.push(p);
+  }
+  // Update paths
+  for (let i = 0; i < arr.length; i++) {
+    const { q, r } = parseKey(arr[i]);
+    svgOutlines[i].setAttribute('d', cornersToPx(hexCornerLatLngs(q, r)));
+    svgOutlines[i].style.display = '';
+  }
+  // Hide excess
+  for (let i = arr.length; i < svgOutlines.length; i++) {
+    svgOutlines[i].style.display = 'none';
+  }
+}
 
-  refresh() { this._redraw(); },
+// Click target paths for select mode (in SVG so they move with it)
+let svgClickPaths = []; // {elem, key}
 
-  // Full rebuild of SVG paths (on data change or zoom/moveend)
-  _redraw() {
-    const svg = this._svg;
-    while (svg.firstChild) svg.removeChild(svg.firstChild);
-    this._clickGroup.clearLayers();
+function syncClickTargets(visibleKeys) {
+  // Remove old
+  for (const { elem } of svgClickPaths) fogSvg.removeChild(elem);
+  svgClickPaths = [];
+  if (!selectMode) return;
 
-    const fogOp    = selectMode ? 0.5 : 0.9;
-    const borderOp = 0.5;
+  for (const k of visibleKeys) {
+    const { q, r } = parseKey(k);
+    const p = document.createElementNS(NS, 'path');
+    p.setAttribute('d', cornersToPx(hexCornerLatLngs(q, r)));
+    p.setAttribute('fill', 'transparent'); // needs fill to catch clicks
+    p.setAttribute('stroke', 'none');
+    p.style.cursor = 'pointer';
+    p.addEventListener('click', (e) => {
+      e.stopPropagation();
+      onHexClick(k);
+    });
+    fogSvg.appendChild(p);
+    svgClickPaths.push({ elem: p, key: k });
+  }
+}
 
-    const borders = borderSet();
-    const hasData = revealed.size > 0 || borders.size > 0;
+// Full redraw: recompute SVG structure when revealed/mode changes
+function redrawFog() {
+  invalidateBorders();
+  drawFog();
+}
 
-    // ── defs: clipPath of all revealed hexes ──
-    const defs = L.SVG.create('defs');
-    const clip = L.SVG.create('clipPath');
-    clip.setAttribute('id', 'fog-clip');
+// Fast redraw: just reproject existing structure (pan/zoom)
+function drawFog() {
+  ensureSvgElements();
 
-    for (const k of revealed) {
-      const {q,r} = parseKey(k);
-      const pts   = hexCorners(q,r).map(ll => this._ll2pt(ll));
-      const path  = L.SVG.create('path');
-      path.setAttribute('d', this._pts2d(pts));
-      clip.appendChild(path);
-    }
-    defs.appendChild(clip);
-    svg.appendChild(defs);
+  const fogOp    = selectMode ? 0.5 : 0.9;
+  const borderOp = 0.5;
+  const extra    = fogOp - borderOp; // 0.4 normally, 0 in select mode
+  const borders  = getBorders();
 
-    // ── full-screen fog rect, clipped ──
-    const rect = L.SVG.create('rect');
-    rect.setAttribute('x', '-200%'); rect.setAttribute('y', '-200%');
-    rect.setAttribute('width', '500%'); rect.setAttribute('height', '500%');
-    rect.setAttribute('fill', '#101010');
-    rect.setAttribute('fill-opacity', String(fogOp));
-    rect.setAttribute('clip-path', 'url(#fog-clip)');
-    // invert: draw everywhere EXCEPT revealed
-    // We want to fill the world except revealed holes.
-    // Use fill-rule evenodd with the bounding world box + hex paths.
-    // Rebuild: draw world rect, then punch holes via clipPath = everything EXCEPT revealed.
-    // Simpler: draw rect without clip (full fog), then draw revealed at opacity 0 on top.
-    svg.appendChild(rect);
+  // Pass 1: borderOp everywhere except revealed
+  const holes1 = revealed;
+  svgPath1.setAttribute('fill-opacity', String(borderOp));
+  svgPath1.setAttribute('d', buildEvenOddPath(holes1));
 
-    // ── Revealed hexes at opacity 0 (erase fog) ──
-    for (const k of revealed) {
-      const {q,r} = parseKey(k);
-      const pts   = hexCorners(q,r).map(ll => this._ll2pt(ll));
-      const path  = L.SVG.create('path');
-      path.setAttribute('d', this._pts2d(pts));
-      path.setAttribute('fill', '#101010');
-      path.setAttribute('fill-opacity', '0');
-      // Use mix-blend-mode destination-out via SVG? Not reliable cross-browser.
-      // Use the evenodd trick instead: one big path with world box + hex holes.
-      svg.appendChild(path);
-    }
+  // Pass 2: extra opacity everywhere except revealed ∪ borders
+  if (extra > 0.001) {
+    svgPath2.style.display = '';
+    const holes2 = new Set([...revealed, ...borders]);
+    svgPath2.setAttribute('fill-opacity', String(extra));
+    svgPath2.setAttribute('d', buildEvenOddPath(holes2));
+  } else {
+    svgPath2.style.display = 'none';
+  }
 
-    // Actually let's redo this properly with evenodd fill rule:
-    // Remove what we added and rebuild with correct approach.
-    while (svg.firstChild) svg.removeChild(svg.firstChild);
+  // Outlines on revealed + border hexes
+  syncOutlines(new Set([...revealed, ...borders]));
 
-    // Approach: draw one giant path using fill-rule="evenodd".
-    // Outer shape = huge rectangle. Inner shapes = revealed hex polygons.
-    // This punches the hexes out of the rectangle.
-    const fogPath = L.SVG.create('path');
-    let d = 'M -9999,-9999 L 9999,-9999 L 9999,9999 L -9999,9999 Z ';
-    for (const k of revealed) {
-      const {q,r} = parseKey(k);
-      const pts   = hexCorners(q,r).map(ll => this._ll2pt(ll));
-      d += this._pts2d(pts) + ' ';
-    }
-    fogPath.setAttribute('d', d);
-    fogPath.setAttribute('fill', '#101010');
-    fogPath.setAttribute('fill-opacity', String(fogOp));
-    fogPath.setAttribute('fill-rule', 'evenodd');
-    fogPath.setAttribute('pointer-events', 'none');
-    svg.appendChild(fogPath);
+  // Click targets
+  if (selectMode) {
+    syncClickTargets(visibleHexKeys());
+  } else {
+    syncClickTargets(new Set()); // clears them
+  }
+}
 
-    // ── Border hexes at 50% opacity (drawn on top of fog, so visible) ──
-    for (const k of borders) {
-      const {q,r} = parseKey(k);
-      const pts   = hexCorners(q,r).map(ll => this._ll2pt(ll));
-      // Draw a hex that takes the fog from 90%→50%: we need net 50% opacity.
-      // The fog rect is already drawn. We draw on top at (fogOp-borderOp) opacity
-      // but inverted — actually easiest: draw transparent patch at reduced opacity.
-      // Since fog is fogOp, border should be borderOp.
-      // We draw a hex on top of the fog at opacity (fogOp-borderOp) using
-      // fill of bg color at destination-over... too complex.
-      // Simpler: fog rect already draws at fogOp everywhere unrevealed.
-      // We want borders at borderOp. So draw a hex with fill=#101010 and
-      // fill-opacity = 0 on top, then use mix-blend-mode? No.
-      // Best approach: after the main fog rect, draw border hexes at negative opacity diff.
-      // Since we can't go negative, instead:
-      // Draw the main fog at borderOp, then draw non-border unrevealed hexes at extra (fogOp-borderOp).
-      // But that's slow when there are many hexes.
-      // Correct approach: draw fog at fogOp, then draw border hexes at 
-      // fill-opacity = 0 with a "clear" blend. Not supported in SVG without feComposite.
-      // FINAL approach: two rects + two clips, or just accept we draw fog at borderOp
-      // and additionally draw a "deep fog" layer for non-border only — 
-      // since borders are only O(revealed) in count, and non-border unrevealed = world minus both.
-      // We can't enumerate world. 
-      // So: draw world fog at borderOp, draw a second fog at (fogOp-borderOp) clipped to 
-      // NOT(revealed ∪ border) = evenodd of world+revealed+border shapes combined.
-      const path = L.SVG.create('path');
-      path.setAttribute('d', this._pts2d(pts));
-      path.setAttribute('fill', '#101010');
-      // Border hex should show through as 50% total.
-      // We'll handle this by drawing fog at borderOp base, then extra layer below.
-      path.setAttribute('fill-opacity', '0'); // placeholder, rebuilt below
-      path.setAttribute('pointer-events', 'none');
-      svg.appendChild(path);
-    }
+/* ═══════════════════════════════════════════════════
+   VISIBLE HEX KEYS (for select-mode click targets)
+═══════════════════════════════════════════════════ */
+function visibleHexKeys() {
+  const bounds = map.getBounds();
+  const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
+  const cs = [ll2m(sw.lat,sw.lng), ll2m(sw.lat,ne.lng), ll2m(ne.lat,sw.lng), ll2m(ne.lat,ne.lng)];
+  const mxMin = Math.min(...cs.map(c=>c.mx)), mxMax = Math.max(...cs.map(c=>c.mx));
+  const myMin = Math.min(...cs.map(c=>c.my)), myMax = Math.max(...cs.map(c=>c.my));
+  const rMin  = Math.floor(myMin / (R * 1.5)) - 1;
+  const rMax  = Math.ceil (myMax / (R * 1.5)) + 1;
+  const keys  = new Set();
+  for (let r = rMin; r <= rMax; r++) {
+    const qF0 = mxMin / (Math.sqrt(3) * R) - r / 2;
+    const qF1 = mxMax / (Math.sqrt(3) * R) - r / 2;
+    for (let q = Math.floor(qF0) - 1; q <= Math.ceil(qF1) + 1; q++) keys.add(hk(q, r));
+  }
+  return keys;
+}
 
-    // ── CORRECT final approach: rebuild everything cleanly ──
-    while (svg.firstChild) svg.removeChild(svg.firstChild);
-    this._buildFog(svg, fogOp, borderOp, borders);
+/* ═══════════════════════════════════════════════════
+   MAP EVENTS — redraw fog on every frame
+═══════════════════════════════════════════════════ */
+map.on('move zoom viewreset', drawFog);
+map.on('moveend zoomend',     () => { if (selectMode) syncClickTargets(visibleHexKeys()); });
 
-    // ── Click polys for select mode ──
-    if (selectMode) {
-      this._buildClickPolys();
-    }
-
-    // Store for reproject
-    this._lastFogOp = fogOp;
-    this._lastBorderOp = borderOp;
-    this._lastBorders = borders;
-  },
-
-  _buildFog(svg, fogOp, borderOp, borders) {
-    // Strategy: 
-    // Layer 1: full fog at borderOp using evenodd (punches out revealed)
-    // Layer 2: additional fog at (fogOp-borderOp) using evenodd (punches out revealed AND borders)
-    // Net result:
-    //   revealed hex:       0 + 0 = 0 opacity ✓
-    //   border hex:   borderOp + 0 = borderOp ✓
-    //   other unrevealed:  borderOp + (fogOp-borderOp) = fogOp ✓
-
-    const extra = fogOp - borderOp;
-
-    // Layer 1: fog at borderOp, holes = revealed
-    {
-      let d = 'M -9999,-9999 L 9999,-9999 L 9999,9999 L -9999,9999 Z ';
-      for (const k of revealed) {
-        const {q,r} = parseKey(k);
-        d += this._pts2d(hexCorners(q,r).map(ll => this._ll2pt(ll))) + ' ';
-      }
-      const p = L.SVG.create('path');
-      p.setAttribute('d', d);
-      p.setAttribute('fill', '#101010');
-      p.setAttribute('fill-opacity', String(borderOp));
-      p.setAttribute('fill-rule', 'evenodd');
-      p.setAttribute('pointer-events', 'none');
-      svg.appendChild(p);
-    }
-
-    // Layer 2: extra fog at (fogOp-borderOp), holes = revealed ∪ borders
-    if (extra > 0.001) {
-      let d = 'M -9999,-9999 L 9999,-9999 L 9999,9999 L -9999,9999 Z ';
-      for (const k of revealed) {
-        const {q,r} = parseKey(k);
-        d += this._pts2d(hexCorners(q,r).map(ll => this._ll2pt(ll))) + ' ';
-      }
-      for (const k of borders) {
-        const {q,r} = parseKey(k);
-        d += this._pts2d(hexCorners(q,r).map(ll => this._ll2pt(ll))) + ' ';
-      }
-      const p = L.SVG.create('path');
-      p.setAttribute('d', d);
-      p.setAttribute('fill', '#101010');
-      p.setAttribute('fill-opacity', String(extra));
-      p.setAttribute('fill-rule', 'evenodd');
-      p.setAttribute('pointer-events', 'none');
-      svg.appendChild(p);
-    }
-
-    // Draw border hex outlines (subtle grid lines for context)
-    // Only at reasonable zoom where they're big enough to see
-    if (revealed.size > 0) {
-      for (const k of [...revealed, ...borders]) {
-        const {q,r} = parseKey(k);
-        const pts   = hexCorners(q,r).map(ll => this._ll2pt(ll));
-        const path  = L.SVG.create('path');
-        path.setAttribute('d', this._pts2d(pts));
-        path.setAttribute('fill', 'none');
-        path.setAttribute('stroke', '#404040');
-        path.setAttribute('stroke-width', '0.8');
-        path.setAttribute('stroke-opacity', '0.7');
-        path.setAttribute('pointer-events', 'none');
-        svg.appendChild(path);
-      }
-    }
-  },
-
-  _buildClickPolys() {
-    // Add invisible click-target polygons for all visible hexes in viewport
-    const visible = this._visibleKeys();
-    for (const k of visible) {
-      const {q,r} = parseKey(k);
-      const corners = hexCorners(q,r);
-      const poly = L.polygon(corners, {
-        fillOpacity: 0, opacity: 0, weight: 0,
-      });
-      poly.on('click', (e) => {
-        L.DomEvent.stopPropagation(e);
-        onHexClick(k);
-      });
-      this._clickGroup.addLayer(poly);
-    }
-  },
-
-  // Re-project existing paths on every pan/zoom frame (fast, no data rebuild)
-  _reproject() {
-    const svg = this._svg;
-    // We rebuild the whole SVG since SVG paths use pixel coords that change.
-    // For performance, we do a quick rebuild only (no JS data computation).
-    this._quickRedraw();
-  },
-
-  _quickRedraw() {
-    const svg = this._svg;
-    while (svg.firstChild) svg.removeChild(svg.firstChild);
-    const fogOp    = selectMode ? 0.5 : 0.9;
-    const borderOp = 0.5;
-    const borders  = this._lastBorders || borderSet();
-    this._lastBorders = borders;
-    this._buildFog(svg, fogOp, borderOp, borders);
-    // Don't rebuild click polys on every move frame
-  },
-
-  _visibleKeys() {
-    const bounds = this._map.getBounds();
-    const sw = bounds.getSouthWest(), ne = bounds.getNorthEast();
-    const corners = [
-      ll2m(sw.lat,sw.lng), ll2m(sw.lat,ne.lng),
-      ll2m(ne.lat,sw.lng), ll2m(ne.lat,ne.lng),
-    ];
-    const mxMin = Math.min(...corners.map(c=>c.mx));
-    const mxMax = Math.max(...corners.map(c=>c.mx));
-    const myMin = Math.min(...corners.map(c=>c.my));
-    const myMax = Math.max(...corners.map(c=>c.my));
-
-    const rMin = Math.floor(myMin / (R*1.5)) - 1;
-    const rMax = Math.ceil (myMax / (R*1.5)) + 1;
-    const keys = new Set();
-    for (let r = rMin; r <= rMax; r++) {
-      const qFMin = mxMin / (Math.sqrt(3)*R) - r/2;
-      const qFMax = mxMax / (Math.sqrt(3)*R) - r/2;
-      for (let q = Math.floor(qFMin)-1; q <= Math.ceil(qFMax)+1; q++) {
-        keys.add(hk(q,r));
-      }
-    }
-    return keys;
-  },
-
-  _ll2pt(ll) {
-    return this._map.latLngToLayerPoint(ll);
-  },
-
-  _pts2d(pts) {
-    return 'M ' + pts.map(p => `${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(' L ') + ' Z';
-  },
-});
-
-const fogLayer = new FogLayer();
-fogLayer.addTo(map);
-
-/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    HEX CLICK (select mode)
-═══════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════ */
 function onHexClick(key) {
   if (!selectMode) return;
-  // Don't deselect the hex user is standing in
   if (trackingOn && userLL) {
     const uk = ll2key(userLL.lat, userLL.lng);
     if (key === uk && revealed.has(key)) return;
@@ -615,19 +488,18 @@ function onHexClick(key) {
   if (revealed.has(key)) revealed.delete(key);
   else                    revealed.add(key);
   store();
-  fogLayer.refresh();
+  redrawFog();
   updateStatus();
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    LOCATION
-═══════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════ */
 const userIcon = L.divIcon({
   className: '',
-  html: `<div style="width:18px;height:18px;border-radius:50%;background:#00a0e0;border:3px solid #fff;box-shadow:0 0 8px rgba(0,160,224,.8);"></div>`,
-  iconSize:[18,18], iconAnchor:[9,9],
+  html: '<div style="width:18px;height:18px;border-radius:50%;background:#00a0e0;border:3px solid #fff;box-shadow:0 0 8px rgba(0,160,224,.8);"></div>',
+  iconSize: [18,18], iconAnchor: [9,9],
 });
-
 let userMarker = null, userCircle = null;
 
 function onPosUpdate(pos) {
@@ -635,45 +507,31 @@ function onPosUpdate(pos) {
   userLL  = { lat, lng };
   userAcc = acc;
 
-  // Snap map to user on first fix (once per tracking session)
   if (!hasSnapped) {
     hasSnapped = true;
     map.setView([lat, lng], 16, { animate: false });
   }
 
-  if (!userMarker) {
-    userMarker = L.marker([lat,lng], { icon: userIcon, zIndexOffset: 1000 }).addTo(map);
-  } else {
-    userMarker.setLatLng([lat,lng]);
-  }
+  if (!userMarker) userMarker = L.marker([lat,lng], { icon: userIcon, zIndexOffset: 1000 }).addTo(map);
+  else             userMarker.setLatLng([lat,lng]);
 
   if (!userCircle) {
-    userCircle = L.circle([lat,lng], {
-      radius: acc, color:'#00a0e0',
-      fillColor:'#00a0e0', fillOpacity:0.08, weight:1, opacity:0.4,
-    }).addTo(map);
+    userCircle = L.circle([lat,lng], { radius:acc, color:'#00a0e0', fillColor:'#00a0e0', fillOpacity:0.08, weight:1, opacity:0.4 }).addTo(map);
   } else {
     userCircle.setLatLng([lat,lng]).setRadius(acc);
   }
 
-  // Reveal hex only if accuracy < 100m
   if (acc < 100) {
     const key = ll2key(lat, lng);
-    if (!revealed.has(key)) {
-      revealed.add(key);
-      store();
-      fogLayer.refresh();
-    }
+    if (!revealed.has(key)) { revealed.add(key); store(); redrawFog(); }
   }
-
   updateStatus();
 }
 
 function onPosError(e) { console.warn('Geo:', e.message); }
 
 function startTracking() {
-  trackingOn = true;
-  hasSnapped = false;
+  trackingOn = true; hasSnapped = false;
   document.getElementById('btn-loc').textContent = 'Stop tracking';
   document.getElementById('btn-loc').classList.add('active');
   watchId = navigator.geolocation.watchPosition(onPosUpdate, onPosError, {
@@ -692,9 +550,9 @@ function stopTracking() {
   updateStatus();
 }
 
-/* ═══════════════════════════════════════════════════════════
-   STATUS LINE
-═══════════════════════════════════════════════════════════ */
+/* ═══════════════════════════════════════════════════
+   STATUS
+═══════════════════════════════════════════════════ */
 function updateStatus() {
   const el = document.getElementById('status-line');
   if (trackingOn && userAcc !== null) {
@@ -705,28 +563,25 @@ function updateStatus() {
   }
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    BUTTONS
-═══════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════ */
 document.getElementById('btn-menu').addEventListener('click', () => {
   document.getElementById('menu-overlay').classList.add('open');
 });
-
 document.getElementById('btn-loc').addEventListener('click', () => {
   if (!trackingOn) {
     if (!navigator.geolocation) { alert('Geolocation not supported.'); return; }
     startTracking();
-  } else {
-    stopTracking();
-  }
+  } else { stopTracking(); }
 });
-
 document.getElementById('btn-select').addEventListener('click', () => {
   selectMode = !selectMode;
   const btn = document.getElementById('btn-select');
   btn.textContent = selectMode ? 'Done' : 'Select';
   selectMode ? btn.classList.add('done-btn') : btn.classList.remove('done-btn');
-  fogLayer.refresh();
+  fogSvg.classList.toggle('select-mode', selectMode);
+  redrawFog();
 });
 
 function closeMenu() { document.getElementById('menu-overlay').classList.remove('open'); }
@@ -740,10 +595,8 @@ document.getElementById('menu-save').addEventListener('click', () => {
     href: url, download: `hexploration-${new Date().toISOString().slice(0,10)}.json`
   });
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url);
-  closeMenu();
+  URL.revokeObjectURL(url); closeMenu();
 });
-
 document.getElementById('menu-load').addEventListener('click', () => {
   stopTracking();
   const inp = Object.assign(document.createElement('input'), { type:'file', accept:'.json,application/json' });
@@ -754,14 +607,13 @@ document.getElementById('menu-load').addEventListener('click', () => {
       try {
         const arr = JSON.parse(e.target.result);
         if (!Array.isArray(arr)) throw 0;
-        revealed = new Set(arr); store(); fogLayer.refresh(); updateStatus(); closeMenu();
+        revealed = new Set(arr); store(); redrawFog(); updateStatus(); closeMenu();
       } catch { alert('Invalid file.'); }
     };
     fr.readAsText(f);
   });
   inp.click();
 });
-
 document.getElementById('menu-clear').addEventListener('click', () => {
   document.getElementById('confirm-overlay').classList.add('open');
 });
@@ -769,16 +621,16 @@ document.getElementById('confirm-cancel').addEventListener('click', () => {
   document.getElementById('confirm-overlay').classList.remove('open');
 });
 document.getElementById('confirm-ok').addEventListener('click', () => {
-  stopTracking();
-  revealed.clear(); store(); fogLayer.refresh(); updateStatus();
+  stopTracking(); revealed.clear(); store(); redrawFog(); updateStatus();
   document.getElementById('confirm-overlay').classList.remove('open');
   closeMenu();
 });
 
-/* ═══════════════════════════════════════════════════════════
+/* ═══════════════════════════════════════════════════
    INIT
-═══════════════════════════════════════════════════════════ */
+═══════════════════════════════════════════════════ */
 updateStatus();
+drawFog();
 </script>
 </body>
 </html>
