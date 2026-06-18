@@ -39,10 +39,6 @@ html, body {
 .leaflet-control-zoom { display: none !important; }
 .leaflet-control-attribution { font-size: 9px !important; opacity: 0.35; }
 
-/* Markers and position dot must sit above fog canvas (z-index 400) */
-.leaflet-marker-pane { z-index: 500 !important; }
-.leaflet-shadow-pane { z-index: 499 !important; }
-
 /* HUD */
 #hud {
   position: absolute; top: 14px; left: 14px; z-index: 600;
@@ -186,8 +182,8 @@ const INNER_R_M      = 100;   // fully clear radius (m)
 const MID_R_M        = 300;   // semi-transparent out to here (m)
 const FOG_OUTER      = 0.90;  // opacity beyond MID_R_M
 const FOG_MID        = 0.50;  // opacity between INNER and MID
-const FOG_EDIT       = 0.50;  // outer fog opacity during draw/edit modes (same as mid)
-const MIN_DIST_M     = 15;    // min GPS movement to record new point
+const FOG_EDIT       = 0.50;  // flat fog opacity during draw/edit modes
+const MIN_DIST_M     = 20;    // min GPS movement to record new point
 const MAX_ACCURACY_M = 100;   // reject GPS fixes worse than this (m)
 const MAX_GAP_M      = 200;   // gap above which GPS starts a new island
 const STORAGE_KEY    = 'explore_v3';
@@ -196,6 +192,7 @@ const STORAGE_KEY    = 'explore_v3';
 let segments     = [];        // Array<Array<{lat,lng}>> — independent islands
 let activeSegIdx = null;      // segment index GPS is appending to
 let currentPos   = null;      // {lat,lng} of last known position (for blue dot)
+let rawPos       = null;      // {lat,lng} updated on every GPS fix regardless of accuracy
 let tracking     = false;
 let watchId      = null;
 let followMe     = false;
@@ -234,6 +231,12 @@ function saveStorage() {
 
 // ── Map ───────────────────────────────────────────────────────────────────────
 const map = L.map('map', { center: [40,-20], zoom: 3, zoomControl: false, attributionControl: true });
+
+// Create a custom pane for the fog that sits above tiles but below markers
+map.createPane('fogPane');
+map.getPane('fogPane').style.zIndex = 350;
+map.getPane('fogPane').style.pointerEvents = 'none';
+
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',    { maxZoom: 19 }).addTo(map);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', { maxZoom: 19, pane: 'shadowPane' }).addTo(map);
 
@@ -242,16 +245,20 @@ map.on('move zoom resize viewreset', redrawFog);
 map.on('click', onMapClick);
 
 // ── Canvas ────────────────────────────────────────────────────────────────────
+// Append canvas into the fogPane so Leaflet's own z-index stacking puts it
+// below markers (markerPane z-index 600) automatically.
 const canvas = document.getElementById('fog-canvas');
-const ctx    = canvas.getContext('2d');
+map.getPane('fogPane').appendChild(canvas);
+const ctx = canvas.getContext('2d');
 
 function resizeCanvas() {
   const r = document.getElementById('map').getBoundingClientRect();
   canvas.width  = r.width;
   canvas.height = r.height;
+  // Position relative to the map container; the pane is already inside it
   canvas.style.cssText =
-    `position:absolute;top:${r.top}px;left:${r.left}px;` +
-    `width:${r.width}px;height:${r.height}px;pointer-events:none;z-index:400`;
+    `position:absolute;top:0;left:0;` +
+    `width:${r.width}px;height:${r.height}px;pointer-events:none;`;
 }
 
 // ── Fog render ────────────────────────────────────────────────────────────────
@@ -365,7 +372,10 @@ function onPosition(pos) {
   accEl.className   = 'stat-val ' + (acc < 50 ? 'good' : acc < 100 ? 'warn' : 'bad');
   document.getElementById('s-acc-wrap').style.display = 'flex';
 
-  // Always show blue dot at current estimated position (above fog via z-index)
+  // Track raw position on every fix (used for immediate follow recentering)
+  rawPos = { lat, lng };
+
+  // Always show blue dot at current estimated position
   updatePosMarker(lat, lng);
   if (followMe) map.setView([lat, lng], Math.max(map.getZoom(), 16), { animate: true, duration: 0.5 });
 
@@ -674,9 +684,10 @@ function setFollow(val) {
   btn.textContent = val ? 'Following' : 'Follow';
   if (val) {
     btn.classList.add('active');
-    // Immediately recenter on current position if known
-    if (currentPos) {
-      map.setView([currentPos.lat, currentPos.lng],
+    // Immediately recenter on most recent raw position if known
+    const pos = rawPos || currentPos;
+    if (pos) {
+      map.setView([pos.lat, pos.lng],
         Math.max(map.getZoom(), 16), { animate: true, duration: 0.5 });
     }
   } else {
