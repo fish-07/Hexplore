@@ -16,7 +16,6 @@ html, body {
 }
 
 #map { position: absolute; top: 0; left: 0; right: 0; bottom: 148px; }
-#fog-canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 400; }
 
 .leaflet-control-zoom { display: none !important; }
 .leaflet-control-attribution { font-size: 9px !important; opacity: 0.35; }
@@ -35,7 +34,7 @@ html, body {
 .stat-val.warn { color: #F0A000; }
 .stat-val.bad  { color: #E03020; }
 
-/* Follow button — fixed width so Follow and Following are the same size */
+/* Follow button */
 #follow-btn {
   position: absolute; top: 14px; right: 14px; z-index: 500;
   background: #202020;
@@ -92,9 +91,6 @@ html, body {
 .menu-btn.danger { color: #E03020; }
 .menu-btn.back   { background: #00A0E0; color: #F0F0F0; }
 
-#map.route-entry { cursor: crosshair; }
-#map.point-edit  { cursor: pointer; }
-
 /* Portrait lock overlay */
 #rotate-overlay {
   display: none;
@@ -109,12 +105,11 @@ html, body {
 
 <div id="rotate-overlay">Rotate to portrait</div>
 <div id="map"></div>
-<canvas id="fog-canvas"></canvas>
 
 <div id="hud">
   <div class="stat">
-    <span class="stat-lbl">Distance</span>
-    <span class="stat-val" id="s-dist">0 m</span>
+    <span class="stat-lbl">Hexagons</span>
+    <span class="stat-val" id="s-hexes">0</span>
   </div>
   <div class="stat">
     <span class="stat-lbl">Area</span>
@@ -132,14 +127,13 @@ html, body {
   <button id="main-btn" onclick="toggleTracking()">Use location</button>
   <div id="sec-row">
     <button class="sec-btn" id="menu-btn" onclick="menuBtnAction()">Menu</button>
-    <button class="sec-btn" id="draw-btn" onclick="drawBtnAction()">Draw path</button>
+    <button class="sec-btn" id="select-btn" onclick="selectBtnAction()">Select</button>
   </div>
 </div>
 
 <div id="menu-overlay" onclick="onOverlayClick(event)">
   <div id="menu-panel">
     <button class="menu-btn back" onclick="closeMenu()">Back</button>
-    <button class="menu-btn"     onclick="startPointEdit()">Edit</button>
     <button class="menu-btn"     onclick="menuSave()">Save</button>
     <label  class="menu-btn"    >Load<input type="file" accept=".json" onchange="menuLoad(event)" style="display:none"></label>
     <button class="menu-btn" id="units-btn" onclick="toggleUnits()">Use imperial units</button>
@@ -158,46 +152,109 @@ window.addEventListener('resize', checkOrientation);
 checkOrientation();
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const CLEAR_RADIUS_M    = 100;  // fully transparent corridor half-width (m)
-const HALF_FOG_RADIUS_M = 300;  // 50% fog out to this radius (m)
-const FOG_OUTER         = 0.90; // fog opacity beyond HALF_FOG_RADIUS_M
-const FOG_MID           = 0.50; // fog opacity between CLEAR_RADIUS_M and HALF_FOG_RADIUS_M
-const FOG_OUTER_EDITING = 0.75; // reduced outer fog during route entry or point editing
-const MIN_MOVE_M        = 25;   // minimum distance from any existing point to record a new GPS point (m)
-const MAX_ACCURACY_M    = 100;  // discard GPS fixes with error radius >= this (m)
-const NEW_ISLAND_GAP_M  = 200;  // start a new disconnected island if GPS displacement exceeds this (m)
-const RDP_TOLERANCE_M   = 5;    // Ramer-Douglas-Peucker simplification threshold (m)
-const ROUTE_STEP_M      = 25;   // interpolation spacing for drawn routes (m)
-const DEFAULT_ZOOM      = 16;   // zoom level applied when Follow is enabled
-const STORAGE_KEY       = 'explore_v4';
+// Hex orientation: flat top/bottom, pointy left/right.
+// HEX_RADIUS_M is the center-to-corner distance (half the point-to-point width).
+// With a 100m point-to-point width, radius = 50m.
+// Flat-to-flat height = 2 * 50 * sin(60°) = 50√3 ≈ 86.6m.
+const HEX_RADIUS_M   = 50;
+const FOG_OUTER      = 0.90;  // unvisited hexes not adjacent to visited
+const FOG_MID        = 0.50;  // hexes adjacent to visited (or all non-visited during Select)
+const MAX_ACCURACY_M = 100;   // discard GPS fixes with error >= this (m)
+const DEFAULT_ZOOM   = 16;
+const STORAGE_KEY    = 'explore_hex_v1';
+
+// Metres per degree latitude (approximately constant)
+const M_PER_DEG_LAT  = 111320;
+
+// ── Hex grid math ─────────────────────────────────────────────────────────────
+// Flat-top axial coordinates (q, r).
+// In this orientation:
+//   - q axis runs horizontally (left/right)
+//   - r axis runs diagonally
+// Center of hex (q,r) in metres from origin:
+//   x = R * 3/2 * q
+//   y = R * √3 * (r + q/2)
+
+const SQRT3 = Math.sqrt(3);
+
+// Convert axial (q,r) to a geographic center {lat, lng} given an origin lat/lng
+function hexToLatLng(q, r, originLat, originLng) {
+  const mPerDegLng = M_PER_DEG_LAT * Math.cos(originLat * Math.PI / 180);
+  const xM = HEX_RADIUS_M * 1.5 * q;
+  const yM = HEX_RADIUS_M * SQRT3 * (r + q / 2);
+  return {
+    lat: originLat + yM / M_PER_DEG_LAT,
+    lng: originLng + xM / mPerDegLng,
+  };
+}
+
+// Convert a geographic point to axial hex coordinates (fractional, then rounded)
+function latLngToHex(lat, lng, originLat, originLng) {
+  const mPerDegLng = M_PER_DEG_LAT * Math.cos(originLat * Math.PI / 180);
+  const xM = (lng - originLng) * mPerDegLng;
+  const yM = (lat - originLat) * M_PER_DEG_LAT;
+  const q  = xM / (HEX_RADIUS_M * 1.5);
+  const r  = yM / (HEX_RADIUS_M * SQRT3) - q / 2;
+  return hexRound(q, r);
+}
+
+// Round fractional axial coordinates to the nearest hex
+function hexRound(q, r) {
+  const s  = -q - r;
+  let rq = Math.round(q), rr = Math.round(r), rs = Math.round(s);
+  const dq = Math.abs(rq - q), dr = Math.abs(rr - r), ds = Math.abs(rs - s);
+  if (dq > dr && dq > ds) rq = -rr - rs;
+  else if (dr > ds)        rr = -rq - rs;
+  return { q: rq, r: rr };
+}
+
+// The 6 axial neighbour directions for a flat-top hex grid
+const HEX_DIRS = [
+  { q:1, r:0 }, { q:1, r:-1 }, { q:0, r:-1 },
+  { q:-1, r:0 }, { q:-1, r:1 }, { q:0, r:1 },
+];
+
+function hexNeighbours(q, r) {
+  return HEX_DIRS.map(d => ({ q: q + d.q, r: r + d.r }));
+}
+
+function hexKey(q, r) { return `${q},${r}`; }
+
+// Return the 6 corner lat/lngs of hex (q,r) for polygon rendering
+function hexCorners(q, r, originLat, originLng) {
+  const center = hexToLatLng(q, r, originLat, originLng);
+  const mPerDegLng = M_PER_DEG_LAT * Math.cos(originLat * Math.PI / 180);
+  const corners = [];
+  // Flat-top: corners at angles 0°, 60°, 120°, 180°, 240°, 300°
+  for (let i = 0; i < 6; i++) {
+    const angle = (Math.PI / 180) * (60 * i);
+    const xM = HEX_RADIUS_M * Math.cos(angle);
+    const yM = HEX_RADIUS_M * Math.sin(angle);
+    corners.push([
+      center.lat + yM / M_PER_DEG_LAT,
+      center.lng + xM / mPerDegLng,
+    ]);
+  }
+  return corners;
+}
 
 // ── State ─────────────────────────────────────────────────────────────────────
-// An island is an array of {lat, lng} points forming one contiguous path.
-// Drawn routes store only their user-tapped vertices; the fog renderer
-// connects them directly, so no interpolated filler points are stored.
-// GPS tracks are simplified via RDP when tracking stops.
-let islands          = [];    // Array<Array<{lat,lng}>>
-let activeIslandIdx  = null;  // island currently receiving GPS points
-let lastKnownPos     = null;  // most recent GPS fix (any accuracy) — drives the blue dot
-let trackingActive   = false;
-let gpsWatchId       = null;
-let followEnabled    = false;
-let metric           = true;
-let totalDist        = 0;
+// The hex grid is anchored to a fixed origin. We use (0, 0) lat/lng as the
+// mathematical origin so that the grid is globally consistent — the same hex
+// always covers the same piece of ground regardless of where the user starts.
+const ORIGIN_LAT = 0;
+const ORIGIN_LNG = 0;
 
-// Route entry mode — user taps vertices to log a path retroactively
-let routeEntryActive = false;
-let routeVertices    = [];    // tapped vertices for the route being entered
-let routeMarkers     = [];    // Leaflet markers for each tapped vertex
-let routePreviewLine = null;  // dashed polyline preview
+let visitedKeys  = new Set(); // Set of "q,r" strings for visited hexes
+let trackingActive = false;
+let gpsWatchId     = null;
+let lastKnownPos   = null;
+let followEnabled  = false;
+let selectMode     = false;
+let metric         = true;
 
-// Point editing mode — user taps existing points to remove them
-let pointEditActive  = false;
-let pointEditMarkers = [];    // [{marker, islandIdx, ptIdx}]
-let pointEditUndo    = [];    // undo stack: [{islandIdx, ptIdx, islandBefore}]
-
-// Blue dot Leaflet marker
-let posMarker = null;
+// Leaflet layers for fog hexes
+let fogLayer = null; // L.LayerGroup holding all rendered fog polygons
 
 // ── Persist ───────────────────────────────────────────────────────────────────
 (function load() {
@@ -205,139 +262,166 @@ let posMarker = null;
     const raw = localStorage.getItem(STORAGE_KEY);
     if (!raw) return;
     const d = JSON.parse(raw);
-    // Support legacy storage keys from earlier versions
-    islands   = d.islands || d.segments || [];
-    metric    = d.metric !== undefined ? d.metric : true;
-    totalDist = computeTotalDist();
+    if (d.visited) visitedKeys = new Set(d.visited);
+    if (d.metric !== undefined) metric = d.metric;
   } catch(e) {}
 })();
 
 function saveStorage() {
-  try { localStorage.setItem(STORAGE_KEY, JSON.stringify({ islands, metric })); } catch(e) {}
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      visited: [...visitedKeys],
+      metric,
+    }));
+  } catch(e) {}
 }
 
 // ── Map ───────────────────────────────────────────────────────────────────────
-const map = L.map('map', { center: [40,-20], zoom: 3, zoomControl: false, attributionControl: true });
+const map = L.map('map', { center: [40, -20], zoom: 3, zoomControl: false, attributionControl: true });
+
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',    { maxZoom: 19 }).addTo(map);
 L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', { maxZoom: 19, pane: 'shadowPane' }).addTo(map);
 
-// Allow free panning at all times; follow is maintained by re-centering on each GPS fix
-map.on('dragstart', () => { if (!routeEntryActive && !pointEditActive) setFollow(false); });
-map.on('move zoom resize viewreset', redrawFog);
+fogLayer = L.layerGroup().addTo(map);
+
+map.on('dragstart', () => { if (!selectMode) setFollow(false); });
+map.on('moveend zoomend', renderFog);
 map.on('click', onMapClick);
 
-// ── Canvas ────────────────────────────────────────────────────────────────────
-const canvas = document.getElementById('fog-canvas');
-const ctx    = canvas.getContext('2d');
+// ── Fog rendering ─────────────────────────────────────────────────────────────
+// We render only hexes that are visible in the current map bounds, plus a buffer.
+// Each hex is a Leaflet Polygon with the appropriate fill opacity.
 
-function resizeCanvas() {
-  const r = document.getElementById('map').getBoundingClientRect();
-  canvas.width  = r.width;
-  canvas.height = r.height;
-  canvas.style.cssText =
-    `position:absolute;top:${r.top}px;left:${r.left}px;` +
-    `width:${r.width}px;height:${r.height}px;pointer-events:none;z-index:400`;
-}
+let renderedKeys = new Set(); // keys of hexes currently in fogLayer
 
-// ── Fog render ────────────────────────────────────────────────────────────────
-function metersToPixels(lat, m) {
-  const p1 = map.latLngToContainerPoint([lat, 0]);
-  const p2 = map.latLngToContainerPoint([lat + m / 111320, 0]);
-  return Math.abs(p2.y - p1.y);
-}
+function renderFog() {
+  const editing = selectMode;
 
-// Build an offscreen mask: opaque wherever any island path falls within radiusM.
-// The GPS blue-dot position is treated as its own isolated single-point island.
-function buildRevealMask(w, h, radiusM) {
-  const c = new OffscreenCanvas(w, h);
-  const x = c.getContext('2d');
-  x.fillStyle = x.strokeStyle = 'rgba(0,0,0,1)';
-  x.lineJoin = 'round'; x.lineCap = 'round';
+  // Compute which hexes should be visible at mid-fog vs outer-fog
+  // A hex is "clear" if visited.
+  // A hex is "mid" if not visited but adjacent to a visited hex,
+  //   OR if we're in select mode (all unvisited → mid).
+  // Everything else is outer.
 
-  const allIslands = lastKnownPos ? [...islands, [lastKnownPos]] : islands;
-
-  for (const island of allIslands) {
-    if (!island.length) continue;
-    const r  = metersToPixels(island[0].lat, radiusM);
-    x.lineWidth = r * 2;
-    const p0 = map.latLngToContainerPoint([island[0].lat, island[0].lng]);
-    x.beginPath(); x.arc(p0.x, p0.y, r, 0, Math.PI * 2); x.fill();
-    for (let i = 1; i < island.length; i++) {
-      const pa = map.latLngToContainerPoint([island[i-1].lat, island[i-1].lng]);
-      const pb = map.latLngToContainerPoint([island[i].lat,   island[i].lng]);
-      x.beginPath(); x.moveTo(pa.x, pa.y); x.lineTo(pb.x, pb.y); x.stroke();
-      x.beginPath(); x.arc(pb.x, pb.y, r, 0, Math.PI * 2); x.fill();
+  // Build adjacency set once
+  const adjacentKeys = new Set();
+  for (const key of visitedKeys) {
+    const [q, r] = key.split(',').map(Number);
+    for (const n of hexNeighbours(q, r)) {
+      const nk = hexKey(n.q, n.r);
+      if (!visitedKeys.has(nk)) adjacentKeys.add(nk);
     }
   }
-  return c;
-}
 
-function redrawFog() {
-  resizeCanvas();
-  const w = canvas.width, h = canvas.height;
+  // Determine which hexes to render in the viewport
+  const bounds  = map.getBounds().pad(0.3); // pad by 30% for smooth scrolling
+  const hexesToRender = new Map(); // key → opacity
 
-  const editing          = routeEntryActive || pointEditActive;
-  const outerFogOpacity  = editing ? FOG_OUTER_EDITING : FOG_OUTER;
+  // For every hex that is visited or adjacent, render it
+  // Also render outer-fog hexes that cover the viewport
+  const visibleHexes = getHexesInBounds(bounds);
 
-  const f  = new OffscreenCanvas(w, h);
-  const fc = f.getContext('2d');
-
-  fc.fillStyle = `rgba(14,14,14,${outerFogOpacity})`;
-  fc.fillRect(0, 0, w, h);
-
-  const allIslands = lastKnownPos ? [...islands, [lastKnownPos]] : islands;
-  if (allIslands.some(s => s.length > 0)) {
-    const midMask   = buildRevealMask(w, h, HALF_FOG_RADIUS_M);
-    const clearMask = buildRevealMask(w, h, CLEAR_RADIUS_M);
-
-    const midFogLayer = new OffscreenCanvas(w, h);
-    const mc = midFogLayer.getContext('2d');
-    mc.drawImage(midMask, 0, 0);
-    mc.globalCompositeOperation = 'source-in';
-    mc.fillStyle = `rgba(14,14,14,${FOG_MID})`;
-    mc.fillRect(0, 0, w, h);
-
-    fc.globalCompositeOperation = 'destination-out';
-    fc.drawImage(midMask, 0, 0);
-    fc.globalCompositeOperation = 'source-over';
-    fc.drawImage(midFogLayer, 0, 0);
-
-    fc.globalCompositeOperation = 'destination-out';
-    fc.drawImage(clearMask, 0, 0);
+  for (const { q, r } of visibleHexes) {
+    const key = hexKey(q, r);
+    if (visitedKeys.has(key)) {
+      // Clear — no polygon needed (map shows through)
+      continue;
+    }
+    if (adjacentKeys.has(key)) {
+      hexesToRender.set(key, FOG_MID);
+    } else {
+      hexesToRender.set(key, editing ? FOG_MID : FOG_OUTER);
+    }
   }
 
-  ctx.clearRect(0, 0, w, h);
-  ctx.drawImage(f, 0, 0);
+  // Diff against what's already rendered to minimise DOM operations
+  const toAdd    = new Map();
+  const toRemove = new Set();
+
+  for (const [key, opacity] of hexesToRender) {
+    if (!renderedKeys.has(key)) toAdd.set(key, opacity);
+  }
+  for (const key of renderedKeys) {
+    if (!hexesToRender.has(key)) toRemove.add(key);
+  }
+
+  // Remove polygons that left the viewport or became clear
+  fogLayer.eachLayer(layer => {
+    if (toRemove.has(layer.options.hexKey)) {
+      fogLayer.removeLayer(layer);
+      renderedKeys.delete(layer.options.hexKey);
+    }
+  });
+
+  // Add new polygons
+  for (const [key, opacity] of toAdd) {
+    const [q, r] = key.split(',').map(Number);
+    const corners = hexCorners(q, r, ORIGIN_LAT, ORIGIN_LNG);
+    const poly = L.polygon(corners, {
+      fillColor:   '#0E0E0E',
+      fillOpacity: opacity,
+      stroke:      false,
+      hexKey:      key,
+    });
+    if (selectMode) {
+      poly.on('click', (e) => { L.DomEvent.stopPropagation(e); toggleHex(q, r); });
+    }
+    fogLayer.addLayer(poly);
+    renderedKeys.add(key);
+  }
+
+  // Update opacity for hexes whose status changed (e.g. neighbour just got visited)
+  fogLayer.eachLayer(layer => {
+    const key = layer.options.hexKey;
+    if (hexesToRender.has(key)) {
+      const newOpacity = hexesToRender.get(key);
+      if (layer.options.fillOpacity !== newOpacity) {
+        layer.setStyle({ fillOpacity: newOpacity });
+        layer.options.fillOpacity = newOpacity;
+      }
+    }
+  });
+
+  updateStats();
 }
 
-// ── Ramer-Douglas-Peucker simplification ──────────────────────────────────────
-// Removes points that deviate less than toleranceM from the straight line
-// between their neighbours. Runs once when a GPS session ends.
-// Time complexity: O(n log n) average, O(n²) worst case on pathological inputs.
+// Return all hex grid coordinates whose centers fall within (padded) bounds
+function getHexesInBounds(bounds) {
+  const hexes = [];
+  // Convert bounds corners to hex coordinates and scan the rectangular range
+  const sw = latLngToHex(bounds.getSouth(), bounds.getWest(), ORIGIN_LAT, ORIGIN_LNG);
+  const ne = latLngToHex(bounds.getNorth(), bounds.getEast(), ORIGIN_LAT, ORIGIN_LNG);
 
-function perpDistM(pt, lineA, lineB) {
-  // Perpendicular distance in metres from pt to the line segment lineA→lineB
-  const dx = lineB.lat - lineA.lat;
-  const dy = lineB.lng - lineA.lng;
-  if (dx === 0 && dy === 0) return haversine(pt.lat, pt.lng, lineA.lat, lineA.lng);
-  const t  = ((pt.lat - lineA.lat) * dx + (pt.lng - lineA.lng) * dy) / (dx*dx + dy*dy);
-  const tc = Math.max(0, Math.min(1, t));
-  return haversine(pt.lat, pt.lng, lineA.lat + tc*dx, lineA.lng + tc*dy);
+  // Add generous padding in hex units to ensure full coverage
+  const pad = 3;
+  for (let q = sw.q - pad; q <= ne.q + pad; q++) {
+    for (let r = ne.r - pad; r <= sw.r + pad; r++) {
+      const center = hexToLatLng(q, r, ORIGIN_LAT, ORIGIN_LNG);
+      if (bounds.contains([center.lat, center.lng])) {
+        hexes.push({ q, r });
+      }
+    }
+  }
+  return hexes;
 }
 
-function rdpSimplify(pts, toleranceM) {
-  if (pts.length <= 2) return pts;
-  let maxDist = 0, maxIdx = 0;
-  for (let i = 1; i < pts.length - 1; i++) {
-    const d = perpDistM(pts[i], pts[0], pts[pts.length-1]);
-    if (d > maxDist) { maxDist = d; maxIdx = i; }
-  }
-  if (maxDist >= toleranceM) {
-    const left  = rdpSimplify(pts.slice(0, maxIdx + 1), toleranceM);
-    const right = rdpSimplify(pts.slice(maxIdx),        toleranceM);
-    return [...left.slice(0, -1), ...right];
-  }
-  return [pts[0], pts[pts.length-1]];
+// Mark a hex as visited (by key string) and refresh
+function visitHex(q, r) {
+  const key = hexKey(q, r);
+  if (visitedKeys.has(key)) return false; // already visited
+  visitedKeys.add(key);
+  saveStorage();
+  renderFog();
+  return true;
+}
+
+// Toggle a hex visited/unvisited (used in Select mode)
+function toggleHex(q, r) {
+  const key = hexKey(q, r);
+  if (visitedKeys.has(key)) visitedKeys.delete(key);
+  else visitedKeys.add(key);
+  saveStorage();
+  renderFog();
 }
 
 // ── GPS tracking ──────────────────────────────────────────────────────────────
@@ -345,97 +429,51 @@ function toggleTracking() { trackingActive ? stopTracking() : startTracking(); }
 
 function startTracking() {
   if (!navigator.geolocation) return;
-  trackingActive  = true;
-  activeIslandIdx = null;
-  // Follow defaults to OFF; button is shown but not active
-  followEnabled   = false;
-  updateUI();
-  // Explicitly sync button appearance so it can't appear active from a previous session
+  trackingActive = true;
+  followEnabled  = false;
   syncFollowButton();
+  updateUI();
   gpsWatchId = navigator.geolocation.watchPosition(onGpsPosition, onGpsError,
     { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
 }
 
 function stopTracking() {
   if (gpsWatchId != null) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
-
-  // RDP-simplify the island that was being recorded this session
-  if (activeIslandIdx !== null && islands[activeIslandIdx]) {
-    islands[activeIslandIdx] = rdpSimplify(islands[activeIslandIdx], RDP_TOLERANCE_M);
-  }
-
-  trackingActive  = false;
-  activeIslandIdx = null;
-  followEnabled   = false;
-  lastKnownPos    = null;
+  trackingActive = false;
+  followEnabled  = false;
+  lastKnownPos   = null;
   if (posMarker) { map.removeLayer(posMarker); posMarker = null; }
   document.getElementById('s-acc-wrap').style.display = 'none';
   document.getElementById('follow-btn').style.display = 'none';
-  totalDist = computeTotalDist(); // recompute after simplification
   saveStorage();
-  updateStats();
   updateUI();
-  redrawFog();
+  renderFog();
 }
+
+let posMarker = null;
 
 function onGpsPosition(pos) {
   const { latitude: lat, longitude: lng, accuracy: acc } = pos.coords;
 
-  // Update accuracy indicator on every fix regardless of quality
+  // Accuracy display
   const accEl = document.getElementById('s-acc');
   accEl.textContent = metric ? `±${Math.round(acc)} m` : `±${Math.round(acc * 3.281)} ft`;
   accEl.className   = 'stat-val ' + (acc < 50 ? 'good' : acc < 100 ? 'warn' : 'bad');
   document.getElementById('s-acc-wrap').style.display = 'flex';
 
-  // Always move the blue dot
+  // Blue dot
   lastKnownPos = { lat, lng };
   updateBlueDot(lat, lng);
 
-  // Re-center if following (preserves current zoom level)
   if (followEnabled) {
     map.setView([lat, lng], map.getZoom(), { animate: true, duration: 0.5 });
   }
 
-  // Discard fix if accuracy is insufficient
+  // Only reveal hex if accuracy is sufficient
   if (acc >= MAX_ACCURACY_M) return;
 
-  if (activeIslandIdx === null) {
-    // Starting fresh: only place first point if not too close to any existing point
-    if (!tooCloseToExistingPoint(lat, lng)) {
-      islands.push([{ lat, lng }]);
-      activeIslandIdx = islands.length - 1;
-    }
-  } else {
-    const island = islands[activeIslandIdx];
-    const prev   = island[island.length - 1];
-    const dist   = haversine(prev.lat, prev.lng, lat, lng);
-
-    if (dist < MIN_MOVE_M) return;
-    if (tooCloseToExistingPoint(lat, lng)) return;
-
-    if (dist >= NEW_ISLAND_GAP_M) {
-      // Likely an accuracy dropout while moving — start a new island
-      islands.push([{ lat, lng }]);
-      activeIslandIdx = islands.length - 1;
-    } else {
-      totalDist += dist;
-      island.push({ lat, lng });
-    }
-  }
-
-  saveStorage();
-  updateStats();
-  redrawFog();
-}
-
-// Returns true if (lat, lng) is within MIN_MOVE_M of any recorded point
-function tooCloseToExistingPoint(lat, lng) {
-  for (const island of islands) {
-    for (const pt of island) {
-      if (haversine(pt.lat, pt.lng, lat, lng) < MIN_MOVE_M) return true;
-    }
-  }
-  return false;
+  const { q, r } = latLngToHex(lat, lng, ORIGIN_LAT, ORIGIN_LNG);
+  visitHex(q, r);
 }
 
 function onGpsError() { stopTracking(); }
@@ -450,179 +488,37 @@ function updateBlueDot(lat, lng) {
   else posMarker = L.marker([lat, lng], { icon, zIndexOffset: 2000 }).addTo(map);
 }
 
-// ── Route entry mode ──────────────────────────────────────────────────────────
-// Stores only the user-tapped vertices. The fog renderer connects them directly,
-// so no interpolated filler points need to be stored. This keeps point count low.
-function drawBtnAction() {
-  if (routeEntryActive) confirmRouteEntry();
-  else if (pointEditActive) confirmPointEdit();
-  else startRouteEntry();
+// ── Select mode ───────────────────────────────────────────────────────────────
+function selectBtnAction() {
+  selectMode ? exitSelectMode() : enterSelectMode();
 }
 
-function menuBtnAction() {
-  if (routeEntryActive) undoRouteVertex();
-  else if (pointEditActive) undoPointRemoval();
-  else openMenu();
-}
-
-function startRouteEntry() {
-  routeEntryActive = true;
-  routeVertices    = [];
-  document.getElementById('map').classList.add('route-entry');
+function enterSelectMode() {
+  selectMode = true;
   updateUI();
-  redrawFog();
+  // Re-render so all unvisited hexes become tappable at mid-opacity
+  fogLayer.clearLayers();
+  renderedKeys.clear();
+  renderFog();
 }
 
-function confirmRouteEntry() {
-  if (routeVertices.length > 0) {
-    // Store only the tapped vertices — the renderer interpolates visually at draw time.
-    // For the proximity check on new GPS points we still need physical points, so we
-    // store interpolated points at ROUTE_STEP_M spacing. This keeps GPS tracking
-    // accurate while avoiding storing thousands of points for long drawn segments.
-    const pts = [routeVertices[0]];
-    for (let i = 1; i < routeVertices.length; i++) {
-      const interp = interpolateSkipClose(routeVertices[i-1], routeVertices[i], ROUTE_STEP_M);
-      pts.push(...interp);
-    }
-    if (pts.length > 0) {
-      islands.push(pts);
-      totalDist += islandLength(pts);
-      saveStorage();
-      updateStats();
-    }
-  }
-  cancelRouteEntry();
-  redrawFog();
-}
-
-function undoRouteVertex() {
-  if (routeVertices.length === 0) { cancelRouteEntry(); return; }
-  routeVertices.pop();
-  const m = routeMarkers.pop();
-  if (m) map.removeLayer(m);
-  if (routePreviewLine) { map.removeLayer(routePreviewLine); routePreviewLine = null; }
-  if (routeVertices.length > 1) {
-    routePreviewLine = L.polyline(
-      routeVertices.map(p => [p.lat, p.lng]),
-      { color: '#00A0E0', weight: 2, opacity: 0.7, dashArray: '6 4' }
-    ).addTo(map);
-  }
-  if (routeVertices.length === 0) cancelRouteEntry();
-}
-
-function cancelRouteEntry() {
-  routeEntryActive = false;
-  routeMarkers.forEach(m => map.removeLayer(m)); routeMarkers = [];
-  if (routePreviewLine) { map.removeLayer(routePreviewLine); routePreviewLine = null; }
-  routeVertices = [];
-  document.getElementById('map').classList.remove('route-entry');
+function exitSelectMode() {
+  selectMode = false;
   updateUI();
-  redrawFog();
+  fogLayer.clearLayers();
+  renderedKeys.clear();
+  renderFog();
 }
 
-// ── Point editing mode ────────────────────────────────────────────────────────
-function startPointEdit() {
-  closeMenu();
-  if (trackingActive) stopTracking();
-  pointEditActive = true;
-  pointEditUndo   = [];
-  document.getElementById('map').classList.add('point-edit');
-  renderPointEditMarkers();
-  updateUI();
-  redrawFog();
-}
-
-function renderPointEditMarkers() {
-  clearPointEditMarkers();
-  islands.forEach((island, ii) => {
-    island.forEach((pt, pi) => {
-      const icon = L.divIcon({
-        className: '',
-        html: `<div style="width:22px;height:22px;border-radius:50%;background:#00A0E0;border:3px solid #F0F0F0;box-shadow:0 0 8px rgba(0,160,224,0.6);cursor:pointer"></div>`,
-        iconAnchor: [11, 11],
-      });
-      const marker = L.marker([pt.lat, pt.lng], { icon, zIndexOffset: 2000 }).addTo(map);
-      marker.on('click', (e) => { L.DomEvent.stopPropagation(e); removePoint(ii, pi); });
-      pointEditMarkers.push({ marker, islandIdx: ii, ptIdx: pi });
-    });
-  });
-}
-
-function clearPointEditMarkers() {
-  pointEditMarkers.forEach(e => map.removeLayer(e.marker));
-  pointEditMarkers = [];
-}
-
-function removePoint(islandIdx, ptIdx) {
-  const island = islands[islandIdx];
-  if (!island) return;
-
-  pointEditUndo.push({ islandIdx, ptIdx, islandBefore: island.slice() });
-
-  const before = island.slice(0, ptIdx);
-  const after  = island.slice(ptIdx + 1);
-  const replacement = [];
-  if (before.length > 0) replacement.push(before);
-  if (after.length  > 0) replacement.push(after);
-
-  islands.splice(islandIdx, 1, ...replacement);
-
-  totalDist = computeTotalDist();
-  saveStorage();
-  updateStats();
-  renderPointEditMarkers();
-  redrawFog();
-}
-
-function undoPointRemoval() {
-  if (pointEditUndo.length === 0) { confirmPointEdit(); return; }
-  const snap = pointEditUndo.pop();
-
-  const b = snap.islandBefore.slice(0, snap.ptIdx);
-  const a = snap.islandBefore.slice(snap.ptIdx + 1);
-  const insertedCount = (b.length > 0 ? 1 : 0) + (a.length > 0 ? 1 : 0);
-
-  islands.splice(snap.islandIdx, insertedCount, snap.islandBefore);
-
-  totalDist = computeTotalDist();
-  saveStorage();
-  updateStats();
-  renderPointEditMarkers();
-  redrawFog();
-}
-
-function confirmPointEdit() {
-  pointEditActive = false;
-  pointEditUndo   = [];
-  clearPointEditMarkers();
-  document.getElementById('map').classList.remove('point-edit');
-  updateUI();
-  redrawFog();
-}
-
-// ── Map click ─────────────────────────────────────────────────────────────────
 function onMapClick(e) {
-  if (!routeEntryActive) return;
-  const pt = { lat: e.latlng.lat, lng: e.latlng.lng };
-  routeVertices.push(pt);
-
-  const icon = L.divIcon({
-    className: '',
-    html: `<div style="width:18px;height:18px;border-radius:50%;background:#00A0E0;border:3px solid #F0F0F0;box-shadow:0 0 8px rgba(0,160,224,0.5)"></div>`,
-    iconAnchor: [9, 9],
-  });
-  routeMarkers.push(L.marker([pt.lat, pt.lng], { icon, zIndexOffset: 2000 }).addTo(map));
-
-  if (routePreviewLine) map.removeLayer(routePreviewLine);
-  if (routeVertices.length > 1) {
-    routePreviewLine = L.polyline(
-      routeVertices.map(p => [p.lat, p.lng]),
-      { color: '#00A0E0', weight: 2, opacity: 0.7, dashArray: '6 4' }
-    ).addTo(map);
-  }
+  if (!selectMode) return;
+  const { q, r } = latLngToHex(e.latlng.lat, e.latlng.lng, ORIGIN_LAT, ORIGIN_LNG);
+  toggleHex(q, r);
 }
 
 // ── Menu ──────────────────────────────────────────────────────────────────────
+function menuBtnAction() { openMenu(); }
+
 function openMenu() {
   document.getElementById('units-btn').textContent =
     metric ? 'Use imperial units' : 'Use metric units';
@@ -638,7 +534,7 @@ function menuSave() {
   closeMenu();
   const a = Object.assign(document.createElement('a'), {
     href: URL.createObjectURL(new Blob(
-      [JSON.stringify({ version: 8, islands })],
+      [JSON.stringify({ version: 1, visited: [...visitedKeys] })],
       { type: 'application/json' }
     )),
     download: 'explore-data.json',
@@ -651,12 +547,13 @@ function menuLoad(e) {
   reader.onload = ev => {
     try {
       const d = JSON.parse(ev.target.result);
-      islands   = d.islands || d.segments || (d.trail ? [d.trail] : []);
-      totalDist = computeTotalDist();
-      updateStats(); saveStorage();
-      const last = islands.flatMap(s => s).pop();
-      if (last) map.setView([last.lat, last.lng], 12);
-      redrawFog();
+      if (d.visited) {
+        visitedKeys = new Set(d.visited);
+        saveStorage();
+        fogLayer.clearLayers();
+        renderedKeys.clear();
+        renderFog();
+      }
     } catch(err) {}
   };
   reader.readAsText(file);
@@ -669,15 +566,16 @@ function toggleUnits() {
     metric ? 'Use imperial units' : 'Use metric units';
   saveStorage();
   updateStats();
-  // Menu stays open intentionally
 }
 function menuClear() {
   if (!confirm('Clear all data?')) return;
   if (trackingActive) stopTracking();
-  if (routeEntryActive) cancelRouteEntry();
-  if (pointEditActive) confirmPointEdit();
-  islands = []; totalDist = 0; lastKnownPos = null;
-  saveStorage(); updateStats(); redrawFog();
+  if (selectMode) exitSelectMode();
+  visitedKeys.clear();
+  saveStorage();
+  fogLayer.clearLayers();
+  renderedKeys.clear();
+  renderFog();
   closeMenu();
 }
 
@@ -687,12 +585,10 @@ function syncFollowButton() {
   btn.textContent = followEnabled ? 'Following' : 'Follow';
   btn.classList.toggle('active', followEnabled);
 }
-
 function setFollow(val) {
   followEnabled = val;
   syncFollowButton();
   if (val && lastKnownPos) {
-    // Jump to DEFAULT_ZOOM and center on current position
     map.setView([lastKnownPos.lat, lastKnownPos.lng], DEFAULT_ZOOM,
       { animate: true, duration: 0.5 });
   }
@@ -703,115 +599,47 @@ function toggleFollow() { setFollow(!followEnabled); }
 function updateUI() {
   const mainBtn   = document.getElementById('main-btn');
   const menuBtn   = document.getElementById('menu-btn');
-  const drawBtn   = document.getElementById('draw-btn');
+  const selectBtn = document.getElementById('select-btn');
   const followBtn = document.getElementById('follow-btn');
 
-  if (pointEditActive) {
-    mainBtn.disabled    = true;
-    mainBtn.textContent = 'Use location';
-    mainBtn.className   = '';
-    menuBtn.textContent = 'Undo';
-    drawBtn.textContent = 'Done';
-    drawBtn.classList.add('active');
-    followBtn.style.display = 'none';
-  } else if (routeEntryActive) {
-    mainBtn.disabled    = false;
-    mainBtn.textContent = trackingActive ? 'Stop tracking' : 'Use location';
-    mainBtn.className   = trackingActive ? 'tracking' : '';
-    menuBtn.textContent = 'Undo';
-    drawBtn.textContent = 'Done';
-    drawBtn.classList.add('active');
-    followBtn.style.display = trackingActive ? 'block' : 'none';
-  } else {
-    mainBtn.disabled    = false;
-    mainBtn.textContent = trackingActive ? 'Stop tracking' : 'Use location';
-    mainBtn.className   = trackingActive ? 'tracking' : '';
-    menuBtn.textContent = 'Menu';
-    drawBtn.textContent = 'Draw path';
-    drawBtn.classList.remove('active');
-    followBtn.style.display = trackingActive ? 'block' : 'none';
-  }
-  // Always sync button appearance through the dedicated function
+  mainBtn.textContent = trackingActive ? 'Stop tracking' : 'Use location';
+  mainBtn.className   = trackingActive ? 'tracking' : '';
+  mainBtn.disabled    = false;
+
+  menuBtn.textContent = 'Menu';
+  selectBtn.textContent = selectMode ? 'Done' : 'Select';
+  selectBtn.classList.toggle('active', selectMode);
+
+  followBtn.style.display = trackingActive ? 'block' : 'none';
   syncFollowButton();
 }
 
 // ── Stats ─────────────────────────────────────────────────────────────────────
+// Hex area: (3√3/2) × r² where r is the circumradius (center-to-corner)
+const HEX_AREA_M2 = (3 * SQRT3 / 2) * HEX_RADIUS_M * HEX_RADIUS_M;
+
 function updateStats() {
-  document.getElementById('s-dist').textContent = fmtDist(totalDist);
-  document.getElementById('s-area').textContent = fmtArea(computeArea());
-}
-
-function computeTotalDist() {
-  return islands.reduce((sum, island) => sum + islandLength(island), 0);
-}
-
-function islandLength(island) {
-  let d = 0;
-  for (let i = 1; i < island.length; i++)
-    d += haversine(island[i-1].lat, island[i-1].lng, island[i].lat, island[i].lng);
-  return d;
-}
-
-function computeArea() {
-  const r = CLEAR_RADIUS_M;
-  let area = 0;
-  for (const island of islands) {
-    if (!island.length) continue;
-    area += Math.PI * r * r;
-    for (let i = 1; i < island.length; i++) {
-      area += haversine(island[i-1].lat, island[i-1].lng, island[i].lat, island[i].lng) * 2 * r;
-      area += Math.PI * r * r;
-    }
-  }
-  return area;
-}
-
-function fmtDist(m) {
-  if (metric) return m >= 1000 ? `${(m/1000).toFixed(2)} km` : `${Math.round(m)} m`;
-  const ft = m * 3.281;
-  return ft >= 5280 ? `${(ft/5280).toFixed(2)} mi` : `${Math.round(ft)} ft`;
+  document.getElementById('s-hexes').textContent = visitedKeys.size.toLocaleString();
+  document.getElementById('s-area').textContent  = fmtArea(visitedKeys.size * HEX_AREA_M2);
 }
 
 function fmtArea(sqm) {
   if (metric) {
-    if (sqm >= 1e6) return `${(sqm/1e6).toFixed(2)} km²`;
-    if (sqm >= 1e4) return `${(sqm/1e4).toFixed(1)} ha`;
+    if (sqm >= 1e6) return `${(sqm / 1e6).toFixed(2)} km²`;
+    if (sqm >= 1e4) return `${(sqm / 1e4).toFixed(1)} ha`;
     return `${Math.round(sqm)} m²`;
   }
   const sqft = sqm * 10.764;
-  if (sqft >= 27878400) return `${(sqft/27878400).toFixed(2)} mi²`;
-  if (sqft >= 43560)    return `${(sqft/43560).toFixed(1)} ac`;
+  if (sqft >= 27878400) return `${(sqft / 27878400).toFixed(2)} mi²`;
+  if (sqft >= 43560)    return `${(sqft / 43560).toFixed(1)} ac`;
   return `${Math.round(sqft)} ft²`;
-}
-
-// ── Helpers ───────────────────────────────────────────────────────────────────
-function haversine(lat1, lng1, lat2, lng2) {
-  const R = 6371000, dL = (lat2-lat1)*Math.PI/180, dG = (lng2-lng1)*Math.PI/180;
-  const a = Math.sin(dL/2)**2 +
-    Math.cos(lat1*Math.PI/180) * Math.cos(lat2*Math.PI/180) * Math.sin(dG/2)**2;
-  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
-}
-
-// Interpolate points every stepM metres between a and b,
-// skipping any point that falls within MIN_MOVE_M of an already-recorded point.
-function interpolateSkipClose(a, b, stepM) {
-  const total = haversine(a.lat, a.lng, b.lat, b.lng);
-  const steps = Math.max(1, Math.floor(total / stepM));
-  const pts   = [];
-  for (let i = 1; i <= steps; i++) {
-    const t   = i / steps;
-    const lat = a.lat + (b.lat - a.lat) * t;
-    const lng = a.lng + (b.lng - a.lng) * t;
-    if (!tooCloseToExistingPoint(lat, lng)) pts.push({ lat, lng });
-  }
-  return pts;
 }
 
 // ── Init ──────────────────────────────────────────────────────────────────────
 updateUI();
 updateStats();
-window.addEventListener('resize', redrawFog);
-setTimeout(redrawFog, 400);
+window.addEventListener('resize', () => { fogLayer.clearLayers(); renderedKeys.clear(); renderFog(); });
+setTimeout(renderFog, 400);
 </script>
 </body>
 </html>
