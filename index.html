@@ -4,499 +4,667 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
-<title>Explore</title>
-<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Hexplorer">
+<title>Hexplorer</title>
 <style>
-* { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
-html, body {
-  height: 100%; background: #101010;
-  font-family: -apple-system, 'SF Pro Display', sans-serif;
-  color: #F0F0F0; overflow: hidden;
-}
-#map { position: absolute; top: 0; left: 0; right: 0; bottom: 148px; }
-#fog-canvas { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 400; }
-.leaflet-control-zoom { display: none !important; }
-.leaflet-control-attribution { font-size: 9px !important; opacity: 0.35; }
-#hud {
-  position: absolute; top: 14px; left: 14px; z-index: 500;
-  background: #101010; border: 1px solid rgba(255,255,255,0.10); border-radius: 12px;
-  padding: 10px 14px; display: flex; gap: 14px; align-items: flex-start;
-}
-.stat { display: flex; flex-direction: column; align-items: center; gap: 2px; min-width: 44px; }
-.stat-lbl { font-size: 10px; color: #808080; letter-spacing: 0.02em; }
-.stat-val { font-size: 15px; font-weight: 700; color: #F0F0F0; }
-.stat-val.good { color: #00E080; }
-.stat-val.warn { color: #F0A000; }
-.stat-val.bad  { color: #E03020; }
-#follow-btn {
-  position: absolute; top: 14px; right: 14px; z-index: 500;
-  background: #202020; border: 1px solid rgba(255,255,255,0.20); border-radius: 10px;
-  padding: 9px 0; width: 100px; text-align: center;
-  font-size: 13px; font-weight: 600; color: #F0F0F0; cursor: pointer; display: none;
-}
-#follow-btn.active { border-color: #00A0E0; background: #00A0E0; }
-#bottom {
-  position: absolute; bottom: 0; left: 0; right: 0; z-index: 500;
-  background: #101010; border-top: 1px solid rgba(255,255,255,0.08);
-  padding: 12px 14px 30px; display: flex; flex-direction: column; gap: 8px;
-}
-#main-btn {
-  width: 100%; padding: 17px; border: none; border-radius: 10px;
-  font-size: 16px; font-weight: 700; cursor: pointer;
-  background: #00A0E0; color: #F0F0F0; transition: background 0.15s;
-}
-#main-btn.tracking { background: #E03020; }
-#main-btn:disabled { opacity: 0.35; cursor: default; }
-#sec-row { display: flex; gap: 8px; }
-.sec-btn {
-  flex: 1; padding: 13px 0; background: #202020;
-  border: 1px solid rgba(255,255,255,0.08); border-radius: 10px;
-  font-size: 14px; font-weight: 600; color: #A0A0A0; cursor: pointer; text-align: center;
-}
-.sec-btn.active { background: #00A0E0; border-color: #00A0E0; color: #F0F0F0; }
-#menu-overlay {
-  position: absolute; inset: 0; z-index: 600;
-  background: rgba(0,0,0,0.72); backdrop-filter: blur(8px);
-  display: none; align-items: flex-end; justify-content: center;
-}
-#menu-overlay.open { display: flex; }
-#menu-panel {
-  width: 100%; background: #181818; border-top: 1px solid rgba(255,255,255,0.10);
-  border-radius: 20px 20px 0 0; padding: 18px 16px 40px;
-  display: flex; flex-direction: column; gap: 10px;
-}
-.menu-btn {
-  width: 100%; padding: 16px; border: none; border-radius: 10px;
-  font-size: 15px; font-weight: 600; cursor: pointer;
-  background: #202020; color: #D0D0D0; text-align: center;
-}
-.menu-btn.danger { color: #E03020; }
-.menu-btn.back   { background: #00A0E0; color: #F0F0F0; }
-#rotate-overlay {
-  display: none; position: fixed; inset: 0; z-index: 99999;
-  background: #101010; align-items: center; justify-content: center;
-  color: #606060; font-size: 16px; font-weight: 600;
-}
+  * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
+  :root {
+    --bg:       #101010;
+    --surface:  #202020;
+    --muted:    #404040;
+    --text:     #fff;
+    --accent:   #00a0e0;
+    --danger:   #c00000;
+    --bar-h:    80px;
+    --safe-b:   env(safe-area-inset-bottom, 0px);
+  }
+
+  html, body {
+    width: 100%; height: 100%;
+    overflow: hidden;
+    background: var(--bg);
+    font-family: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+    color: var(--text);
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  /* ── Map ── */
+  #map {
+    position: fixed; inset: 0;
+    bottom: calc(var(--bar-h) + var(--safe-b));
+  }
+
+  /* ── Bottom bar ── */
+  #bar {
+    position: fixed; left: 0; right: 0;
+    bottom: 0;
+    height: calc(var(--bar-h) + var(--safe-b));
+    background: var(--surface);
+    border-top: 1px solid var(--muted);
+    display: flex; flex-direction: column;
+    align-items: center;
+    padding-bottom: var(--safe-b);
+    z-index: 100;
+  }
+
+  #status-line {
+    font-size: 13px;
+    color: var(--accent);
+    height: 20px;
+    line-height: 20px;
+    letter-spacing: .02em;
+  }
+
+  #btn-row {
+    display: flex; gap: 8px;
+    padding: 6px 12px 0;
+    width: 100%;
+  }
+
+  .bar-btn {
+    flex: 1;
+    height: 44px;
+    border: none; outline: none;
+    border-radius: 12px;
+    background: var(--muted);
+    color: var(--text);
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: background .15s, transform .1s;
+    -webkit-appearance: none;
+  }
+  .bar-btn:active { transform: scale(.96); }
+  .bar-btn.active { background: var(--accent); color: #fff; }
+  .bar-btn.done-btn { background: var(--accent); }
+  .bar-btn.menu-open { background: var(--muted); }
+
+  /* ── Menu sheet ── */
+  #menu-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    z-index: 200;
+  }
+  #menu-overlay.open { display: block; }
+
+  #menu-backdrop {
+    position: absolute; inset: 0;
+    background: rgba(0,0,0,.5);
+  }
+
+  #menu-sheet {
+    position: absolute; left: 0; right: 0; bottom: 0;
+    background: var(--surface);
+    border-radius: 20px 20px 0 0;
+    padding: 16px 16px calc(16px + var(--safe-b));
+    display: flex; flex-direction: column; gap: 10px;
+  }
+
+  #menu-handle {
+    width: 40px; height: 4px;
+    border-radius: 2px;
+    background: var(--muted);
+    align-self: center;
+    margin-bottom: 6px;
+  }
+
+  .menu-btn {
+    width: 100%; height: 52px;
+    border: none; outline: none;
+    border-radius: 14px;
+    background: var(--muted);
+    color: var(--text);
+    font-size: 17px;
+    font-weight: 600;
+    cursor: pointer;
+    -webkit-appearance: none;
+    transition: background .15s, transform .1s;
+  }
+  .menu-btn:active { transform: scale(.98); }
+  .menu-btn.danger { background: var(--danger); }
+  .menu-btn.back-btn { background: var(--bg); color: var(--accent); }
+
+  /* ── Confirm dialog ── */
+  #confirm-overlay {
+    display: none;
+    position: fixed; inset: 0;
+    z-index: 300;
+    background: rgba(0,0,0,.6);
+    align-items: center; justify-content: center;
+  }
+  #confirm-overlay.open { display: flex; }
+
+  #confirm-box {
+    background: var(--surface);
+    border-radius: 18px;
+    padding: 24px 20px 16px;
+    width: min(320px, 90vw);
+    display: flex; flex-direction: column; gap: 10px; align-items: center;
+  }
+  #confirm-box p { font-size: 18px; font-weight: 600; text-align: center; }
+  #confirm-box small { font-size: 13px; color: #999; text-align: center; line-height: 1.4; }
+
+  .confirm-row { display: flex; gap: 10px; width: 100%; }
+  .confirm-row button {
+    flex: 1; height: 48px;
+    border: none; outline: none; border-radius: 12px;
+    font-size: 16px; font-weight: 600; cursor: pointer;
+    -webkit-appearance: none;
+  }
+  #confirm-cancel { background: var(--muted); color: var(--text); }
+  #confirm-ok     { background: var(--danger); color: #fff; }
 </style>
 </head>
 <body>
-<div id="rotate-overlay">Rotate to portrait</div>
+
+<!-- Map container -->
 <div id="map"></div>
-<canvas id="fog-canvas"></canvas>
 
-<div id="hud">
-  <div class="stat"><span class="stat-lbl">Hexagons</span><span class="stat-val" id="s-hexes">0</span></div>
-  <div class="stat"><span class="stat-lbl">Area</span><span class="stat-val" id="s-area">0 m²</span></div>
-  <div class="stat" id="s-acc-wrap" style="display:none">
-    <span class="stat-lbl">Accuracy</span><span class="stat-val" id="s-acc">—</span>
+<!-- Bottom bar -->
+<div id="bar">
+  <div id="status-line">0 hexagons</div>
+  <div id="btn-row">
+    <button class="bar-btn" id="btn-menu">Menu</button>
+    <button class="bar-btn" id="btn-loc">Use location</button>
+    <button class="bar-btn" id="btn-select">Select</button>
   </div>
 </div>
 
-<button id="follow-btn" onclick="toggleFollow()">Follow</button>
-
-<div id="bottom">
-  <button id="main-btn" onclick="toggleTracking()">Use location</button>
-  <div id="sec-row">
-    <button class="sec-btn" id="menu-btn" onclick="menuBtnAction()">Menu</button>
-    <button class="sec-btn" id="select-btn" onclick="selectBtnAction()">Select</button>
+<!-- Menu sheet -->
+<div id="menu-overlay">
+  <div id="menu-backdrop"></div>
+  <div id="menu-sheet">
+    <div id="menu-handle"></div>
+    <button class="menu-btn" id="menu-save">Save</button>
+    <button class="menu-btn" id="menu-load">Load</button>
+    <button class="menu-btn danger" id="menu-clear">Clear data</button>
+    <button class="menu-btn back-btn" id="menu-back">Back</button>
   </div>
 </div>
 
-<div id="menu-overlay" onclick="onOverlayClick(event)">
-  <div id="menu-panel">
-    <button class="menu-btn back"   onclick="closeMenu()">Back</button>
-    <button class="menu-btn"        onclick="menuSave()">Save</button>
-    <label  class="menu-btn">Load<input type="file" accept=".json" onchange="menuLoad(event)" style="display:none"></label>
-    <button class="menu-btn" id="units-btn" onclick="toggleUnits()">Use imperial units</button>
-    <button class="menu-btn danger" onclick="menuClear()">Clear data</button>
+<!-- Confirm dialog -->
+<div id="confirm-overlay">
+  <div id="confirm-box">
+    <p>Are you sure?</p>
+    <small>This will erase all revealed hexagons and cannot be undone.</small>
+    <div class="confirm-row">
+      <button id="confirm-cancel">Cancel</button>
+      <button id="confirm-ok">Clear</button>
+    </div>
   </div>
 </div>
 
+<!-- Leaflet -->
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+
 <script>
-// ── Orientation lock ──────────────────────────────────────────────────────────
-function checkOrientation() {
-  document.getElementById('rotate-overlay').style.display =
-    window.innerWidth > window.innerHeight ? 'flex' : 'none';
-}
-window.addEventListener('resize', checkOrientation);
-checkOrientation();
+'use strict';
 
-// ── Constants ─────────────────────────────────────────────────────────────────
-// Flat-top hex (pointy left/right). Point-to-point width = 100m → radius = 50m.
-const HEX_R_M        = 50;          // center-to-corner metres
-const SQRT3          = Math.sqrt(3);
-const HEX_AREA_M2    = 1.5 * SQRT3 * HEX_R_M * HEX_R_M; // ≈ 6495 m²
-const M_PER_DEG_LAT  = 111320;
-const FOG_OUTER      = 0.90;
-const FOG_MID        = 0.50;
-const MAX_ACCURACY_M = 100;
-const DEFAULT_ZOOM   = 16;
-const STORAGE_KEY    = 'explore_hex_v1';
+/* ═══════════════════════════════════════════════
+   HEX GRID CONSTANTS
+   100m flat-to-flat (pointy-top orientation):
+   width (corner-to-corner) = 100 / cos(30°) ≈ 115.47m
+   height (flat-to-flat)    = 100m
+   hex grid rows offset by half width
+═══════════════════════════════════════════════ */
+const HEX_FLAT   = 100;   // flat-to-flat metres (what we call "100m wide")
+const HEX_SIZE   = HEX_FLAT / Math.sqrt(3); // circumradius in metres ≈ 57.74m
+// pointy-top hex: width = sqrt(3)*size, height = 2*size
+// flat-to-flat (short diagonal) = sqrt(3)*size = 100m → size = 100/sqrt(3)
 
-// ── Hex math ──────────────────────────────────────────────────────────────────
-// Axial coordinates (q, r) for a flat-top grid.
-// Center of (q,r) in metres from origin:
-//   x = R * 1.5 * q
-//   y = R * √3 * (r + q/2)
+/* ═══════════════════════════════════════════════
+   MAP INIT
+═══════════════════════════════════════════════ */
+const map = L.map('map', {
+  center: [51.505, -0.09],
+  zoom: 16,
+  zoomControl: false,
+  attributionControl: true,
+});
 
-function mPerDegLng(lat) {
-  return M_PER_DEG_LAT * Math.cos(lat * Math.PI / 180);
-}
+L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+  attribution: '© OpenStreetMap contributors',
+  maxZoom: 19,
+}).addTo(map);
 
-// Geographic origin for the grid — fixed so the grid is globally consistent
-const OLat = 0, OLng = 0;
+/* ═══════════════════════════════════════════════
+   STATE
+═══════════════════════════════════════════════ */
+let revealedHexes = new Set();   // keys: "q,r"
+let trackingOn    = false;
+let selectMode    = false;
+let userLatLng    = null;
+let userAccuracy  = null;
+let watchId       = null;
+let hexLayers     = {};          // key → L.polygon
+let userMarker    = null;
+let userCircle    = null;
 
-function hexCenter(q, r) {
-  // Returns {lat, lng} of hex center
-  const xM = HEX_R_M * 1.5 * q;
-  const yM = HEX_R_M * SQRT3 * (r + q / 2);
-  return {
-    lat: OLat + yM / M_PER_DEG_LAT,
-    lng: OLng + xM / mPerDegLng(OLat),
-  };
-}
+/* ═══════════════════════════════════════════════
+   STORAGE
+═══════════════════════════════════════════════ */
+const STORE_KEY = 'hexplorer_v1';
 
-function latLngToHex(lat, lng) {
-  const xM = (lng - OLng) * mPerDegLng(OLat);
-  const yM = (lat - OLat) * M_PER_DEG_LAT;
-  const q  = xM / (HEX_R_M * 1.5);
-  const r  = yM / (HEX_R_M * SQRT3) - q / 2;
-  return hexRound(q, r);
-}
-
-function hexRound(q, r) {
-  const s = -q - r;
-  let rq = Math.round(q), rr = Math.round(r), rs = Math.round(s);
-  const dq = Math.abs(rq - q), dr = Math.abs(rr - r), ds = Math.abs(rs - s);
-  if (dq > dr && dq > ds) rq = -rr - rs;
-  else if (dr > ds)        rr = -rq - rs;
-  return { q: rq, r: rr };
+function saveToStorage() {
+  try {
+    localStorage.setItem(STORE_KEY, JSON.stringify([...revealedHexes]));
+  } catch(e) {}
 }
 
-const HEX_DIRS = [
-  {q:1,r:0},{q:1,r:-1},{q:0,r:-1},{q:-1,r:0},{q:-1,r:1},{q:0,r:1}
-];
-
-function hexNeighbours(q, r) {
-  return HEX_DIRS.map(d => ({ q: q + d.q, r: r + d.r }));
+function loadFromStorage() {
+  try {
+    const raw = localStorage.getItem(STORE_KEY);
+    if (raw) revealedHexes = new Set(JSON.parse(raw));
+  } catch(e) {}
 }
 
-function hexKey(q, r) { return `${q},${r}`; }
+loadFromStorage();
 
-// Return the 6 pixel corners of hex (q,r) on the current map canvas
-function hexPixelCorners(q, r) {
-  const c = hexCenter(q, r);
-  const cp = map.latLngToContainerPoint([c.lat, c.lng]);
-  // Pixel radius: convert HEX_R_M to pixels via a reference point
-  const ref = map.latLngToContainerPoint([
-    c.lat + HEX_R_M / M_PER_DEG_LAT, c.lng
-  ]);
-  const rPx = Math.abs(cp.y - ref.y);
+/* ═══════════════════════════════════════════════
+   HEX MATH  (pointy-top axial coordinates)
+   Earth metres → axial (q,r) and back
+═══════════════════════════════════════════════ */
+
+// Metres per degree latitude (approx, at given lat)
+function metersPerDegLat(lat) {
+  return 111320;
+}
+function metersPerDegLon(lat) {
+  return 111320 * Math.cos(lat * Math.PI / 180);
+}
+
+// Convert LatLng → fractional axial hex coords
+function latlngToAxial(lat, lng, originLat, originLng) {
+  const mPerDegLat = metersPerDegLat(originLat);
+  const mPerDegLon = metersPerDegLon(originLat);
+  const dx = (lng - originLng) * mPerDegLon;
+  const dy = (lat - originLat) * mPerDegLat;
+  const s  = HEX_SIZE;
+  // pointy-top axial: q = (dx*sqrt3/3 - dy/3)/s, r = dy*2/3/s
+  const fq = (dx * Math.sqrt(3)/3 - dy / 3) / s;
+  const fr = (dy * 2/3) / s;
+  return { fq, fr };
+}
+
+// Axial → rounded axial (hex coordinate)
+function axialRound(fq, fr) {
+  const fs = -fq - fr;
+  let q = Math.round(fq), r = Math.round(fr), s = Math.round(fs);
+  const dq = Math.abs(q - fq), dr = Math.abs(r - fr), ds = Math.abs(s - fs);
+  if (dq > dr && dq > ds) q = -r - s;
+  else if (dr > ds)         r = -q - s;
+  return { q, r };
+}
+
+// Axial → centre LatLng
+function axialToLatLng(q, r, originLat, originLng) {
+  const s  = HEX_SIZE;
+  const mPerDegLat = metersPerDegLat(originLat);
+  const mPerDegLon = metersPerDegLon(originLat);
+  // pointy-top: x = s * sqrt(3)*(q + r/2), y = s * 3/2 * r
+  const dx = s * Math.sqrt(3) * (q + r / 2);
+  const dy = s * 1.5 * r;
+  return [originLat + dy / mPerDegLat, originLng + dx / mPerDegLon];
+}
+
+// Axial → 6 corner LatLngs (pointy-top)
+function hexCorners(q, r, originLat, originLng) {
+  const [cLat, cLng] = axialToLatLng(q, r, originLat, originLng);
+  const s  = HEX_SIZE;
+  const mPerDegLat = metersPerDegLat(originLat);
+  const mPerDegLon = metersPerDegLon(originLat);
   const corners = [];
   for (let i = 0; i < 6; i++) {
-    const angle = (Math.PI / 180) * (60 * i); // 0°,60°,...,300° for flat-top
-    corners.push({ x: cp.x + rPx * Math.cos(angle), y: cp.y - rPx * Math.sin(angle) });
+    const angle = (Math.PI / 180) * (60 * i - 30); // pointy-top
+    const dx = s * Math.cos(angle);
+    const dy = s * Math.sin(angle);
+    corners.push([cLat + dy / mPerDegLat, cLng + dx / mPerDegLon]);
   }
   return corners;
 }
 
-// ── State ─────────────────────────────────────────────────────────────────────
-let visitedKeys  = new Set();
-let trackingActive = false;
-let gpsWatchId   = null;
-let lastKnownPos = null;
-let followEnabled = false;
-let selectMode   = false;
-let metric       = true;
-let posMarker    = null;
-
-// ── Persist ───────────────────────────────────────────────────────────────────
-(function load() {
-  try {
-    const d = JSON.parse(localStorage.getItem(STORAGE_KEY) || '{}');
-    if (d.visited) visitedKeys = new Set(d.visited);
-    if (d.metric !== undefined) metric = d.metric;
-  } catch(e) {}
-})();
-
-function save() {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify({ visited: [...visitedKeys], metric }));
-  } catch(e) {}
+// Axial neighbours
+function axialNeighbours(q, r) {
+  return [
+    [q+1,r],[q-1,r],[q,r+1],[q,r-1],[q+1,r-1],[q-1,r+1]
+  ];
 }
 
-// ── Map ───────────────────────────────────────────────────────────────────────
-const map = L.map('map', { center: [40,-20], zoom: 3, zoomControl: false, attributionControl: true });
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_nolabels/{z}/{x}/{y}{r}.png',    { maxZoom: 19 }).addTo(map);
-L.tileLayer('https://{s}.basemaps.cartocdn.com/light_only_labels/{z}/{x}/{y}{r}.png', { maxZoom: 19, pane: 'shadowPane' }).addTo(map);
+/* ═══════════════════════════════════════════════
+   HEX RENDERING
+═══════════════════════════════════════════════ */
 
-map.on('dragstart', () => { if (!selectMode) setFollow(false); });
-map.on('move zoom resize viewreset', drawFog);
-map.on('click', onMapClick);
-
-// ── Canvas fog ────────────────────────────────────────────────────────────────
-const canvas = document.getElementById('fog-canvas');
-const ctx    = canvas.getContext('2d');
-
-function syncCanvas() {
-  const r = document.getElementById('map').getBoundingClientRect();
-  canvas.width  = r.width;
-  canvas.height = r.height;
-  canvas.style.cssText =
-    `position:absolute;top:${r.top}px;left:${r.left}px;` +
-    `width:${r.width}px;height:${r.height}px;pointer-events:none;z-index:400`;
+// Use map centre as origin so coords stay reasonable
+function getOrigin() {
+  const c = map.getCenter();
+  return { lat: c.lat, lng: c.lng };
 }
 
-function drawHexPath(corners) {
-  ctx.beginPath();
-  ctx.moveTo(corners[0].x, corners[0].y);
-  for (let i = 1; i < 6; i++) ctx.lineTo(corners[i].x, corners[i].y);
-  ctx.closePath();
+// Stable origin pinned on first render, updated lazily
+let originLat = map.getCenter().lat;
+let originLng = map.getCenter().lng;
+
+function hexKey(q, r) { return `${q},${r}`; }
+
+function getOpacity(key) {
+  if (revealedHexes.has(key)) return 0;
+  // check if any neighbour is revealed
+  const [q, r] = key.split(',').map(Number);
+  for (const [nq, nr] of axialNeighbours(q, r)) {
+    if (revealedHexes.has(hexKey(nq, nr))) return 0.5;
+  }
+  return selectMode ? 0.5 : 0.9;
 }
 
-function drawFog() {
-  syncCanvas();
-  const w = canvas.width, h = canvas.height;
+function hexStyle(key) {
+  const op = getOpacity(key);
+  return {
+    fillColor:   '#101010',
+    fillOpacity: op,
+    color:       '#404040',
+    weight:      0.8,
+    opacity:     op === 0 ? 0 : 0.6,
+  };
+}
 
-  // 1. Fill entire canvas with outer fog
-  const outerOpacity = selectMode ? FOG_MID : FOG_OUTER;
-  ctx.fillStyle = `rgba(14,14,14,${outerOpacity})`;
-  ctx.fillRect(0, 0, w, h);
+// Which hexes are visible in the current map view?
+function visibleHexKeys() {
+  const bounds = map.getBounds();
+  const sw = bounds.getSouthWest();
+  const ne = bounds.getNorthEast();
+  const padding = 2; // extra hex rows/cols
 
-  if (visitedKeys.size === 0) return;
+  // Convert corners to axial
+  const swA = axialRound(...Object.values(latlngToAxial(sw.lat, sw.lng, originLat, originLng)));
+  const neA = axialRound(...Object.values(latlngToAxial(ne.lat, ne.lng, originLat, originLng)));
 
-  // Build the set of adjacent (mid-fog) hexes
-  const adjKeys = new Set();
-  for (const key of visitedKeys) {
-    const [q, r] = key.split(',').map(Number);
-    for (const n of hexNeighbours(q, r)) {
-      const nk = hexKey(n.q, n.r);
-      if (!visitedKeys.has(nk)) adjKeys.add(nk);
+  const qMin = Math.min(swA.q, neA.q) - padding;
+  const qMax = Math.max(swA.q, neA.q) + padding;
+  const rMin = Math.min(swA.r, neA.r) - padding;
+  const rMax = Math.max(swA.r, neA.r) + padding;
+
+  const keys = new Set();
+  for (let q = qMin; q <= qMax; q++) {
+    for (let r = rMin; r <= rMax; r++) {
+      keys.add(hexKey(q, r));
+    }
+  }
+  return keys;
+}
+
+// Hex overlay layer group
+const hexGroup = L.layerGroup().addTo(map);
+
+function renderHexes() {
+  const visible = visibleHexKeys();
+
+  // Remove off-screen layers
+  for (const key of Object.keys(hexLayers)) {
+    if (!visible.has(key)) {
+      hexGroup.removeLayer(hexLayers[key]);
+      delete hexLayers[key];
     }
   }
 
-  // 2. Determine which hexes are in (or near) the viewport
-  const pad = map.getBounds().pad(0.5);
+  // Add / update visible
+  for (const key of visible) {
+    const [q, r] = key.split(',').map(Number);
+    const corners = hexCorners(q, r, originLat, originLng);
+    const style   = hexStyle(key);
 
-  // 3. Paint mid-fog over adjacent hexes (destination-out won't work directly,
-  //    so we use a two-pass approach on an offscreen canvas)
-  const off = new OffscreenCanvas(w, h);
-  const octx = off.getContext('2d');
-
-  // Start offscreen with outer fog
-  octx.fillStyle = `rgba(14,14,14,${outerOpacity})`;
-  octx.fillRect(0, 0, w, h);
-
-  // Paint mid-fog hexes (adjacent)
-  if (!selectMode) {
-    octx.fillStyle = `rgba(14,14,14,${FOG_MID})`;
-    for (const key of adjKeys) {
-      const [q, r] = key.split(',').map(Number);
-      const c = hexCenter(q, r);
-      if (!pad.contains([c.lat, c.lng])) continue;
-      const corners = hexPixelCorners(q, r);
-      octx.beginPath();
-      octx.moveTo(corners[0].x, corners[0].y);
-      for (let i = 1; i < 6; i++) octx.lineTo(corners[i].x, corners[i].y);
-      octx.closePath();
-      octx.fill();
+    if (hexLayers[key]) {
+      hexLayers[key].setStyle(style);
+    } else {
+      const poly = L.polygon(corners, style);
+      poly.on('click', (e) => onHexClick(key, e));
+      hexGroup.addLayer(poly);
+      hexLayers[key] = poly;
     }
   }
 
-  // Punch visited hexes fully clear
-  octx.globalCompositeOperation = 'destination-out';
-  octx.fillStyle = 'rgba(0,0,0,1)';
-  for (const key of visitedKeys) {
-    const [q, r] = key.split(',').map(Number);
-    const c = hexCenter(q, r);
-    if (!pad.contains([c.lat, c.lng])) continue;
-    const corners = hexPixelCorners(q, r);
-    octx.beginPath();
-    octx.moveTo(corners[0].x, corners[0].y);
-    for (let i = 1; i < 6; i++) octx.lineTo(corners[i].x, corners[i].y);
-    octx.closePath();
-    octx.fill();
-  }
-
-  ctx.clearRect(0, 0, w, h);
-  ctx.drawImage(off, 0, 0);
+  updateStatusLine();
 }
 
-// ── GPS ───────────────────────────────────────────────────────────────────────
-function toggleTracking() { trackingActive ? stopTracking() : startTracking(); }
+function refreshAllStyles() {
+  for (const key of Object.keys(hexLayers)) {
+    hexLayers[key].setStyle(hexStyle(key));
+  }
+  updateStatusLine();
+}
+
+/* ═══════════════════════════════════════════════
+   HEX CLICK
+═══════════════════════════════════════════════ */
+function onHexClick(key, e) {
+  if (!selectMode) return;
+  L.DomEvent.stopPropagation(e);
+
+  // Don't allow de-selecting the hex the user is currently in
+  if (trackingOn && userLatLng) {
+    const userKey = latlngToHexKey(userLatLng.lat, userLatLng.lng);
+    if (key === userKey && revealedHexes.has(key)) return;
+  }
+
+  if (revealedHexes.has(key)) {
+    revealedHexes.delete(key);
+  } else {
+    revealedHexes.add(key);
+  }
+  saveToStorage();
+  refreshAllStyles();
+}
+
+/* ═══════════════════════════════════════════════
+   LOCATION
+═══════════════════════════════════════════════ */
+const userIcon = L.divIcon({
+  className: '',
+  html: `<div style="
+    width:18px;height:18px;
+    border-radius:50%;
+    background:#00a0e0;
+    border:3px solid #fff;
+    box-shadow:0 0 8px rgba(0,160,224,.8);
+  "></div>`,
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
+});
+
+function latlngToHexKey(lat, lng) {
+  const { fq, fr } = latlngToAxial(lat, lng, originLat, originLng);
+  const { q, r }   = axialRound(fq, fr);
+  return hexKey(q, r);
+}
+
+function onLocationUpdate(pos) {
+  const { latitude: lat, longitude: lng, accuracy } = pos.coords;
+  userLatLng  = { lat, lng };
+  userAccuracy = accuracy;
+
+  // Show marker
+  if (!userMarker) {
+    userMarker = L.marker([lat, lng], { icon: userIcon, zIndexOffset: 1000 }).addTo(map);
+  } else {
+    userMarker.setLatLng([lat, lng]);
+  }
+
+  // Show accuracy circle
+  if (!userCircle) {
+    userCircle = L.circle([lat, lng], {
+      radius: accuracy,
+      color: '#00a0e0',
+      fillColor: '#00a0e0',
+      fillOpacity: 0.08,
+      weight: 1,
+      opacity: 0.4,
+    }).addTo(map);
+  } else {
+    userCircle.setLatLng([lat, lng]).setRadius(accuracy);
+  }
+
+  // Reveal hex if accuracy < 100m
+  if (accuracy < 100) {
+    const key = latlngToHexKey(lat, lng);
+    if (!revealedHexes.has(key)) {
+      revealedHexes.add(key);
+      saveToStorage();
+    }
+  }
+
+  renderHexes();
+  updateStatusLine();
+}
+
+function onLocationError(err) {
+  console.warn('Geo error', err.message);
+}
 
 function startTracking() {
-  if (!navigator.geolocation) return;
-  trackingActive = true;
-  followEnabled  = false;
-  syncFollowBtn();
-  updateUI();
-  gpsWatchId = navigator.geolocation.watchPosition(onPosition, onGpsError,
-    { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 });
+  trackingOn = true;
+  document.getElementById('btn-loc').textContent = 'Stop tracking';
+  document.getElementById('btn-loc').classList.add('active');
+  watchId = navigator.geolocation.watchPosition(onLocationUpdate, onLocationError, {
+    enableHighAccuracy: true,
+    maximumAge: 2000,
+    timeout: 10000,
+  });
 }
 
 function stopTracking() {
-  if (gpsWatchId != null) { navigator.geolocation.clearWatch(gpsWatchId); gpsWatchId = null; }
-  trackingActive = false;
-  followEnabled  = false;
-  lastKnownPos   = null;
-  if (posMarker) { map.removeLayer(posMarker); posMarker = null; }
-  document.getElementById('s-acc-wrap').style.display = 'none';
-  document.getElementById('follow-btn').style.display = 'none';
-  save(); updateUI(); drawFog();
+  trackingOn = false;
+  document.getElementById('btn-loc').textContent = 'Use location';
+  document.getElementById('btn-loc').classList.remove('active');
+  if (watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+  }
+  if (userMarker) { map.removeLayer(userMarker); userMarker = null; }
+  if (userCircle) { map.removeLayer(userCircle); userCircle = null; }
+  userLatLng  = null;
+  userAccuracy = null;
+  updateStatusLine();
+  refreshAllStyles();
 }
 
-function onPosition(pos) {
-  const { latitude: lat, longitude: lng, accuracy: acc } = pos.coords;
-
-  const el = document.getElementById('s-acc');
-  el.textContent = metric ? `±${Math.round(acc)} m` : `±${Math.round(acc*3.281)} ft`;
-  el.className   = 'stat-val ' + (acc < 50 ? 'good' : acc < 100 ? 'warn' : 'bad');
-  document.getElementById('s-acc-wrap').style.display = 'flex';
-
-  lastKnownPos = { lat, lng };
-  updateBlueDot(lat, lng);
-  if (followEnabled) map.setView([lat, lng], map.getZoom(), { animate: true, duration: 0.5 });
-
-  if (acc >= MAX_ACCURACY_M) return;
-
-  const { q, r } = latLngToHex(lat, lng);
-  const key = hexKey(q, r);
-  if (!visitedKeys.has(key)) {
-    visitedKeys.add(key);
-    save(); updateStats(); drawFog();
+/* ═══════════════════════════════════════════════
+   STATUS LINE
+═══════════════════════════════════════════════ */
+function updateStatusLine() {
+  const el = document.getElementById('status-line');
+  if (trackingOn && userAccuracy !== null) {
+    const m = Math.round(userAccuracy);
+    el.textContent = `±${m} meters`;
+  } else {
+    const n = revealedHexes.size;
+    el.textContent = `${n} hexagon${n !== 1 ? 's' : ''}`;
   }
 }
 
-function onGpsError() { stopTracking(); }
-
-function updateBlueDot(lat, lng) {
-  const icon = L.divIcon({
-    className: '',
-    html: `<div style="width:14px;height:14px;border-radius:50%;background:#00A0E0;border:3px solid #F0F0F0;box-shadow:0 0 0 4px rgba(0,160,224,0.25)"></div>`,
-    iconAnchor: [7,7],
-  });
-  if (posMarker) posMarker.setLatLng([lat, lng]);
-  else posMarker = L.marker([lat, lng], { icon, zIndexOffset: 2000 }).addTo(map);
-}
-
-// ── Select mode ───────────────────────────────────────────────────────────────
-function selectBtnAction() {
-  selectMode = !selectMode;
-  updateUI();
-  drawFog();
-}
-
-function onMapClick(e) {
-  if (!selectMode) return;
-  const { q, r } = latLngToHex(e.latlng.lat, e.latlng.lng);
-  const key = hexKey(q, r);
-  if (visitedKeys.has(key)) visitedKeys.delete(key);
-  else visitedKeys.add(key);
-  save(); updateStats(); drawFog();
-}
-
-// ── Menu ──────────────────────────────────────────────────────────────────────
-function menuBtnAction() { openMenu(); }
-
-function openMenu() {
-  document.getElementById('units-btn').textContent =
-    metric ? 'Use imperial units' : 'Use metric units';
+/* ═══════════════════════════════════════════════
+   BUTTON HANDLERS
+═══════════════════════════════════════════════ */
+document.getElementById('btn-menu').addEventListener('click', () => {
   document.getElementById('menu-overlay').classList.add('open');
-}
-function closeMenu() { document.getElementById('menu-overlay').classList.remove('open'); }
-function onOverlayClick(e) {
-  if (e.target === document.getElementById('menu-overlay')) closeMenu();
-}
-function menuSave() {
-  closeMenu();
-  const blob = new Blob([JSON.stringify({ version: 1, visited: [...visitedKeys] })],
-    { type: 'application/json' });
-  Object.assign(document.createElement('a'),
-    { href: URL.createObjectURL(blob), download: 'explore-data.json' }).click();
-}
-function menuLoad(e) {
-  const file = e.target.files[0]; if (!file) return;
-  const reader = new FileReader();
-  reader.onload = ev => {
-    try {
-      const d = JSON.parse(ev.target.result);
-      if (d.visited) { visitedKeys = new Set(d.visited); save(); updateStats(); drawFog(); }
-    } catch(err) {}
-  };
-  reader.readAsText(file);
-  e.target.value = '';
-  closeMenu();
-}
-function toggleUnits() {
-  metric = !metric;
-  document.getElementById('units-btn').textContent =
-    metric ? 'Use imperial units' : 'Use metric units';
-  save(); updateStats();
-}
-function menuClear() {
-  if (!confirm('Clear all data?')) return;
-  if (trackingActive) stopTracking();
-  selectMode = false;
-  visitedKeys.clear();
-  save(); updateUI(); updateStats(); drawFog();
-  closeMenu();
-}
+});
 
-// ── Follow ────────────────────────────────────────────────────────────────────
-function syncFollowBtn() {
-  const btn = document.getElementById('follow-btn');
-  btn.textContent = followEnabled ? 'Following' : 'Follow';
-  btn.classList.toggle('active', followEnabled);
-}
-function setFollow(val) {
-  followEnabled = val;
-  syncFollowBtn();
-  if (val && lastKnownPos)
-    map.setView([lastKnownPos.lat, lastKnownPos.lng], DEFAULT_ZOOM, { animate: true, duration: 0.5 });
-}
-function toggleFollow() { setFollow(!followEnabled); }
-
-// ── UI ────────────────────────────────────────────────────────────────────────
-function updateUI() {
-  const mainBtn = document.getElementById('main-btn');
-  mainBtn.textContent = trackingActive ? 'Stop tracking' : 'Use location';
-  mainBtn.className   = trackingActive ? 'tracking' : '';
-
-  const selBtn = document.getElementById('select-btn');
-  selBtn.textContent = selectMode ? 'Done' : 'Select';
-  selBtn.classList.toggle('active', selectMode);
-
-  document.getElementById('follow-btn').style.display = trackingActive ? 'block' : 'none';
-  syncFollowBtn();
-}
-
-// ── Stats ─────────────────────────────────────────────────────────────────────
-function updateStats() {
-  document.getElementById('s-hexes').textContent = visitedKeys.size.toLocaleString();
-  const sqm = visitedKeys.size * HEX_AREA_M2;
-  document.getElementById('s-area').textContent = fmtArea(sqm);
-}
-
-function fmtArea(sqm) {
-  if (metric) {
-    if (sqm >= 1e6) return `${(sqm/1e6).toFixed(2)} km²`;
-    if (sqm >= 1e4) return `${(sqm/1e4).toFixed(1)} ha`;
-    return `${Math.round(sqm)} m²`;
+document.getElementById('btn-loc').addEventListener('click', () => {
+  if (!trackingOn) {
+    if (!navigator.geolocation) { alert('Geolocation not supported.'); return; }
+    startTracking();
+  } else {
+    stopTracking();
   }
-  const sqft = sqm * 10.764;
-  if (sqft >= 27878400) return `${(sqft/27878400).toFixed(2)} mi²`;
-  if (sqft >= 43560)    return `${(sqft/43560).toFixed(1)} ac`;
-  return `${Math.round(sqft)} ft²`;
+});
+
+document.getElementById('btn-select').addEventListener('click', () => {
+  selectMode = !selectMode;
+  const btn = document.getElementById('btn-select');
+  if (selectMode) {
+    btn.textContent = 'Done';
+    btn.classList.add('done-btn');
+  } else {
+    btn.textContent = 'Select';
+    btn.classList.remove('done-btn');
+  }
+  refreshAllStyles();
+});
+
+/* ── Menu ── */
+function closeMenu() {
+  document.getElementById('menu-overlay').classList.remove('open');
 }
 
-// ── Init ──────────────────────────────────────────────────────────────────────
-updateUI();
-updateStats();
-window.addEventListener('resize', drawFog);
-setTimeout(drawFog, 300);
+document.getElementById('menu-backdrop').addEventListener('click', closeMenu);
+document.getElementById('menu-back').addEventListener('click', closeMenu);
+
+document.getElementById('menu-save').addEventListener('click', () => {
+  const data = JSON.stringify([...revealedHexes]);
+  const blob = new Blob([data], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `hexplorer-${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  closeMenu();
+});
+
+document.getElementById('menu-load').addEventListener('click', () => {
+  stopTracking();
+  const input = document.createElement('input');
+  input.type  = 'file';
+  input.accept = '.json,application/json';
+  input.addEventListener('change', () => {
+    const file = input.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const arr = JSON.parse(e.target.result);
+        if (!Array.isArray(arr)) throw new Error();
+        revealedHexes = new Set(arr);
+        saveToStorage();
+        renderHexes();
+        closeMenu();
+      } catch {
+        alert('Invalid file.');
+      }
+    };
+    reader.readAsText(file);
+  });
+  input.click();
+});
+
+document.getElementById('menu-clear').addEventListener('click', () => {
+  document.getElementById('confirm-overlay').classList.add('open');
+});
+
+document.getElementById('confirm-cancel').addEventListener('click', () => {
+  document.getElementById('confirm-overlay').classList.remove('open');
+});
+
+document.getElementById('confirm-ok').addEventListener('click', () => {
+  stopTracking();
+  revealedHexes.clear();
+  saveToStorage();
+  renderHexes();
+  document.getElementById('confirm-overlay').classList.remove('open');
+  closeMenu();
+});
+
+/* ═══════════════════════════════════════════════
+   MAP EVENTS
+═══════════════════════════════════════════════ */
+map.on('moveend zoomend', renderHexes);
+
+// Initial render
+renderHexes();
 </script>
 </body>
 </html>
