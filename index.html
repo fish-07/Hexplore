@@ -10,6 +10,7 @@
 <title>Hexploration</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
+
   :root {
     --bg:      #101010;
     --surface: #202020;
@@ -22,7 +23,9 @@
     --safe-l:  env(safe-area-inset-left, 0px);
     --safe-r:  env(safe-area-inset-right, 0px);
   }
+
   html { background: #101010; }
+
   body {
     width: 100%; height: 100%; overflow: hidden;
     background: var(--bg);
@@ -30,25 +33,21 @@
     color: var(--text);
     user-select: none; -webkit-user-select: none;
   }
-  #map {
+
+  #map, #fog-svg {
     position: fixed;
     top: var(--safe-t);
     left: var(--safe-l);
     right: var(--safe-r);
-    bottom: calc(var(--bar-h, 140px) + var(--safe-b));
+    bottom: calc(var(--bar-height, 140px) + var(--safe-b));
   }
   #fog-svg {
-    position: fixed;
-    top: var(--safe-t);
-    left: var(--safe-l);
-    right: var(--safe-r);
-    bottom: calc(var(--bar-h, 140px) + var(--safe-b));
     pointer-events: none;
     z-index: 450;
     overflow: visible;
   }
 
-  /* ── Bottom bar ── */
+  /* Bottom control bar */
   #bar {
     position: fixed; left: 0; right: 0; bottom: 0;
     background: var(--surface);
@@ -64,7 +63,7 @@
     color: var(--accent); letter-spacing: .01em;
     padding: 2px 8px;
   }
-  #btn-row { display: flex; gap: 10px; width: 100%; }
+  #button-row { display: flex; gap: 10px; width: 100%; }
   .bar-btn {
     flex: 1; height: 60px;
     border: none; outline: none; border-radius: 14px;
@@ -77,7 +76,7 @@
   .bar-btn.active   { background: var(--accent); }
   .bar-btn.done-btn { background: var(--accent); }
 
-  /* ── Menu sheet ── */
+  /* Menu sheet */
   #menu-overlay { display: none; position: fixed; inset: 0; z-index: 600; }
   #menu-overlay.open { display: block; }
   #menu-backdrop { position: absolute; inset: 0; background: rgba(0,0,0,.5); }
@@ -105,7 +104,7 @@
   .menu-btn.danger   { background: var(--danger); color: #fff; }
   .menu-btn.back-btn { background: var(--accent); color: #fff; }
 
-  /* ── Confirm dialog ── */
+  /* Confirm dialog */
   #confirm-overlay {
     display: none; position: fixed; inset: 0; z-index: 700;
     background: rgba(0,0,0,.65);
@@ -138,14 +137,23 @@
 </head>
 <body>
 
+<!-- Hidden probes sized purely by env(safe-area-inset-*). JS measures
+     their actual rendered size to get reliable safe-area values, since
+     iOS Safari can report a stale env() value for a moment right after
+     a landscape <-> portrait rotation. -->
+<div id="probe-t" style="position:fixed;top:0;left:0;width:1px;height:env(safe-area-inset-top,0px);visibility:hidden;"></div>
+<div id="probe-b" style="position:fixed;bottom:0;left:0;width:1px;height:env(safe-area-inset-bottom,0px);visibility:hidden;"></div>
+<div id="probe-l" style="position:fixed;top:0;left:0;width:env(safe-area-inset-left,0px);height:1px;visibility:hidden;"></div>
+<div id="probe-r" style="position:fixed;top:0;right:0;width:env(safe-area-inset-right,0px);height:1px;visibility:hidden;"></div>
+
 <div id="map"></div>
 <svg id="fog-svg" xmlns="http://www.w3.org/2000/svg"></svg>
 
 <div id="bar">
   <div id="status-line">0 hexagons</div>
-  <div id="btn-row">
+  <div id="button-row">
     <button class="bar-btn" id="btn-menu">Menu</button>
-    <button class="bar-btn" id="btn-loc">Use location</button>
+    <button class="bar-btn" id="btn-location">Use location</button>
     <button class="bar-btn" id="btn-select">Select</button>
   </div>
 </div>
@@ -176,451 +184,532 @@
 <script>
 'use strict';
 
-/* ═══════════════════════════════════════════════════════════
-   HEX GRID — defined in fixed Mercator-pixel space (zoom 0)
-   ─────────────────────────────────────────────────────────
-   Leaflet's default CRS (EPSG:3857 / Web Mercator) maps the
-   whole world to a 256×256 px square at zoom 0, and doubles
-   in size each zoom level.
+/* ===========================================================
+   HEX GRID MATH
 
-   KEY IDEA: define the hex grid directly in zoom-0 pixel
-   units (a fixed, latitude-independent Cartesian plane).
-   Because it's already a flat pixel plane, every hex is
-   automatically THE SAME SCREEN SIZE at a given zoom level,
-   everywhere on the map.
+   Hexagons are flat-top (points left/right, flat edges
+   top/bottom) and laid out on an axial (q, r) grid.
 
-   CALIBRATION: the hex should be exactly 100 m corner-to-corner
-   (circumradius = 50 m) AT THE 35°N PARALLEL. Mercator's
-   pixel-per-metre ratio varies with latitude (it's the same in
-   x and y at any given point, scaled by 1/cos(lat)), so we
-   compute that ratio at lat=35° to size R0.
+   The grid lives in a fixed, latitude-independent pixel plane:
+   Leaflet's zoom-0 Mercator pixel space, where the whole world
+   is 256x256px and doubles in size each zoom level. Because
+   this plane is flat, every hexagon is exactly the same size
+   on screen at a given zoom level, anywhere on the map.
 
-   FLAT-TOP hexagons (point left/right, flat edge top/bottom):
-     mx = R·1.5·q
-     my = R√3·(r + q/2)
-   Inverse:
-     q  = mx·2/(3R)
-     r  = my/(R√3) − q/2
-═══════════════════════════════════════════════════════════ */
+   The hexagon's circumradius (HEX_RADIUS_PX0, in zoom-0 pixels) is
+   calibrated so a hexagon is exactly 100m wide corner-to-corner
+   at CALIBRATION_LATITUDE. Web Mercator's scale factor varies
+   with latitude (1/cos(lat)), so real-world hex size shrinks
+   near the equator and grows near the poles, while staying a
+   constant size in screen pixels everywhere.
 
-const CAL_LAT = 35;                          // calibration latitude (°N)
-const MPD     = 111320;                      // metres per degree longitude at equator
-const TARGET_HEX_METRES = 100;               // desired corner-to-corner width at CAL_LAT
+   Axial -> zoom-0 pixel centre (flat-top layout):
+     x = HEX_RADIUS_PX0 * 1.5 * q
+     y = HEX_RADIUS_PX0 * sqrt(3) * (r + q/2)
+=========================================================== */
 
-// Web Mercator pixels-per-metre at zoom 0, at a given latitude:
-// world width = 256px for 360° of longitude → px/deg(lng) = 256/360 (constant, all latitudes)
-// px/metre(lng) = (256/360) / MPD  — this is also the LOCAL px/metre in the
-// y-direction at that latitude, because Web Mercator is conformal
-// (equal scale in x and y at every point), scaled by 1/cos(lat).
-const pxPerDegLngAtZ0 = 256 / 360;
-const pxPerMetreAtEquatorZ0 = pxPerDegLngAtZ0 / MPD;
-const pxPerMetreAtCalLatZ0  = pxPerMetreAtEquatorZ0 / Math.cos(CAL_LAT * Math.PI / 180);
+const CALIBRATION_LATITUDE = 35;   // hex is 100m wide at this latitude
+const METRES_PER_DEGREE    = 111320;
+const TARGET_HEX_METRES    = 100;  // corner-to-corner width at CALIBRATION_LATITUDE
 
-// Circumradius (R0) in zoom-0 pixels, calibrated so the hex is
-// TARGET_HEX_METRES wide (corner-to-corner = 2R) at CAL_LAT.
-const R0 = (TARGET_HEX_METRES / 2) * pxPerMetreAtCalLatZ0;
+const pxPerMetreAtEquator    = (256 / 360) / METRES_PER_DEGREE;
+const pxPerMetreAtCalibration = pxPerMetreAtEquator / Math.cos(CALIBRATION_LATITUDE * Math.PI / 180);
+const HEX_RADIUS_PX0 = (TARGET_HEX_METRES / 2) * pxPerMetreAtCalibration; // circumradius, zoom-0 px
 
-function ll2zoom0px(lat, lng) {
-  const p = map.project(L.latLng(lat, lng), 0);
-  return { mx: p.x, my: p.y };
-}
-
-// Flat-top axial from zoom-0 pixel coords
-function m2fax(mx, my) {
-  const fq = mx * 2 / (3 * R0);
-  const fr = my / (Math.sqrt(3) * R0) - fq / 2;
-  return { fq, fr };
-}
-function axRound(fq, fr) {
-  const fs = -fq - fr;
-  let q = Math.round(fq), r = Math.round(fr), s = Math.round(fs);
-  const dq = Math.abs(q-fq), dr = Math.abs(r-fr), ds = Math.abs(s-fs);
-  if      (dq > dr && dq > ds) q = -r - s;
-  else if (dr > ds)            r = -q - s;
+function hexKey(q, r) { return `${q},${r}`; }
+function parseHexKey(key) {
+  const [q, r] = key.split(',').map(Number);
   return { q, r };
 }
-function ll2key(lat, lng) {
-  const {mx,my} = ll2zoom0px(lat,lng);
-  const {fq,fr} = m2fax(mx,my);
-  const {q,r}   = axRound(fq,fr);
-  return `${q},${r}`;
+
+// Axial -> zoom-0 pixel centre
+function axialToPixel0(q, r) {
+  return {
+    x: HEX_RADIUS_PX0 * 1.5 * q,
+    y: HEX_RADIUS_PX0 * Math.sqrt(3) * (r + q / 2),
+  };
 }
 
-// Axial → zoom-0 pixel centre
-function ax2px0(q, r) {
-  return { mx: R0*1.5*q, my: R0*Math.sqrt(3)*(r+q/2) };
-}
-// Axial → LatLng (for placing markers etc, rarely needed)
-function ax2ll(q, r) {
-  const {mx,my} = ax2px0(q,r);
-  return map.unproject(L.point(mx,my), 0);
+// LatLng -> hex key. Projects to zoom-0 pixels, converts to fractional
+// axial coordinates, then rounds to the nearest hex using cube rounding.
+function latLngToHexKey(lat, lng) {
+  const p = map.project(L.latLng(lat, lng), 0);
+  const fq = p.x * 2 / (3 * HEX_RADIUS_PX0);
+  const fr = p.y / (Math.sqrt(3) * HEX_RADIUS_PX0) - fq / 2;
+  const fs = -fq - fr;
+
+  let q = Math.round(fq), r = Math.round(fr), s = Math.round(fs);
+  const dq = Math.abs(q - fq), dr = Math.abs(r - fr), ds = Math.abs(s - fs);
+  if      (dq > dr && dq > ds) q = -r - s;
+  else if (dr > ds)            r = -q - s;
+
+  return hexKey(q, r);
 }
 
-function nbrs(q, r) {
-  return [[q+1,r],[q-1,r],[q,r+1],[q,r-1],[q+1,r-1],[q-1,r+1]];
+function hexNeighbours(q, r) {
+  return [[q+1,r], [q-1,r], [q,r+1], [q,r-1], [q+1,r-1], [q-1,r+1]];
 }
-function hk(q,r)     { return `${q},${r}`; }
-function parseKey(k) { const [q,r]=k.split(',').map(Number); return {q,r}; }
 
-/* ═══════════════════════════════════════════════════════════
-   MAP — standard Web Mercator with OSM street tiles
-═══════════════════════════════════════════════════════════ */
+/* ===========================================================
+   HEX SCREEN POSITION
+
+   Goes directly from a hex's zoom-0 pixel centre to its current
+   on-screen position, with no lat/lng conversion in between.
+   (An earlier version round-tripped through lat/lng, which lost
+   enough floating-point precision at high zoom to leave visible
+   seams between adjacent hexagons.)
+
+   map.layerPointToContainerPoint() is used for the final step
+   because it accounts for the map pane's live position during
+   an active drag or zoom gesture; map.getPixelOrigin() alone
+   only updates once a gesture finishes, which would make the
+   hex grid lag behind the map while panning.
+=========================================================== */
+function hexCenterOnScreen(q, r) {
+  const { x, y } = axialToPixel0(q, r);
+  const scale = Math.pow(2, map.getZoom());
+  const absolutePixel = L.point(x * scale, y * scale);
+  const origin = map.getPixelOrigin();
+  const layerPoint = L.point(absolutePixel.x - origin.x, absolutePixel.y - origin.y);
+  return map.layerPointToContainerPoint(layerPoint);
+}
+
+function hexCornersOnScreen(q, r) {
+  const center = hexCenterOnScreen(q, r);
+  const radius = HEX_RADIUS_PX0 * Math.pow(2, map.getZoom());
+  const corners = [];
+  for (let i = 0; i < 6; i++) {
+    const angle = i * (Math.PI / 3); // flat-top: corners at 0, 60, 120...
+    corners.push({
+      x: center.x + radius * Math.cos(angle),
+      y: center.y + radius * Math.sin(angle),
+    });
+  }
+  return corners;
+}
+
+function hexSvgPath(q, r) {
+  const corners = hexCornersOnScreen(q, r);
+  const points = corners.map(p => `${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' L ');
+  return `M ${points} Z`;
+}
+
+/* ===========================================================
+   MAP
+=========================================================== */
 const map = L.map('map', {
-  center: [20, 0], zoom: 3,
-  zoomControl: false, attributionControl: true,
+  center: [20, 0],
+  zoom: 3,
+  zoomControl: false,
+  attributionControl: true,
 });
+
 L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-  attribution: '© OpenStreetMap contributors', maxZoom: 19,
+  attribution: '© OpenStreetMap contributors',
+  maxZoom: 19,
 }).addTo(map);
 
+/* ===========================================================
+   LAYOUT SYNCING
+
+   Keeps CSS custom properties in sync with the real, current
+   layout: the control bar's height, and the device's safe-area
+   insets (read via hidden probe elements rather than trusting
+   live CSS env(), which can briefly go stale after rotation).
+=========================================================== */
 function syncBarHeight() {
-  const h = document.getElementById('bar').getBoundingClientRect().height;
-  document.documentElement.style.setProperty('--bar-h', h+'px');
-}
-function syncSvgSize() {
-  const el = document.getElementById('fog-svg');
-  const rect = el.getBoundingClientRect();
-  el.setAttribute('width',  Math.ceil(rect.width));
-  el.setAttribute('height', Math.ceil(rect.height));
+  const height = document.getElementById('bar').getBoundingClientRect().height;
+  document.documentElement.style.setProperty('--bar-height', height + 'px');
 }
 
-/* ═══════════════════════════════════════════════════════════
-   STATE
-═══════════════════════════════════════════════════════════ */
-let revealed   = new Set();
-let trackingOn = false;
-let selectMode = false;
-let userLL     = null;
-let userAcc    = null;
-let watchId    = null;
-let hasSnapped = false;
+function syncSafeArea() {
+  const root = document.documentElement;
+  const top    = document.getElementById('probe-t').getBoundingClientRect().height;
+  const bottom = document.getElementById('probe-b').getBoundingClientRect().height;
+  const left   = document.getElementById('probe-l').getBoundingClientRect().width;
+  const right  = document.getElementById('probe-r').getBoundingClientRect().width;
+  root.style.setProperty('--safe-t', top + 'px');
+  root.style.setProperty('--safe-b', bottom + 'px');
+  root.style.setProperty('--safe-l', left + 'px');
+  root.style.setProperty('--safe-r', right + 'px');
+}
 
-/* ═══════════════════════════════════════════════════════════
+function syncFogSvgSize() {
+  const svg = document.getElementById('fog-svg');
+  const rect = svg.getBoundingClientRect();
+  svg.setAttribute('width', Math.ceil(rect.width));
+  svg.setAttribute('height', Math.ceil(rect.height));
+}
+
+function syncLayout() {
+  syncSafeArea();
+  syncBarHeight();
+  syncFogSvgSize();
+  drawFog();
+}
+
+/* ===========================================================
+   APP STATE
+=========================================================== */
+let revealedHexes = new Set();  // hex keys the user has uncovered
+let trackingOn = false;         // "Use location" mode
+let selectMode = false;         // "Select" mode
+let userLatLng = null;          // current GPS position, or null
+let userAccuracy = null;        // current GPS accuracy in metres
+let watchId = null;             // geolocation watch handle
+let hasSnappedToUser = false;   // whether we've auto-centred this session
+
+/* ===========================================================
    STORAGE
-═══════════════════════════════════════════════════════════ */
-const SK = 'hexploration_v1';
-function store() { try { localStorage.setItem(SK,JSON.stringify([...revealed])); } catch(e){} }
-function load()  { try { const d=localStorage.getItem(SK); if(d) revealed=new Set(JSON.parse(d)); } catch(e){} }
-load();
+=========================================================== */
+const STORAGE_KEY = 'hexploration_v1';
 
-/* ═══════════════════════════════════════════════════════════
-   PIXEL-SPACE HEX CORNERS (screen pixels at current zoom)
-   ─────────────────────────────────────────────────────────
-   IMPORTANT: we must use map.latLngToContainerPoint() to find
-   each hex's screen position, NOT manual pixelOrigin arithmetic.
-   Leaflet updates latLngToContainerPoint continuously during
-   active drag/zoom gestures (it accounts for the live CSS
-   transform on the map pane), whereas map.getPixelOrigin()
-   only updates once a gesture ends — using it mid-drag causes
-   the hex overlay to lag behind or move the wrong direction
-   relative to the map tiles.
-
-   The hex's on-screen RADIUS still uses the fixed R0 * 2^zoom
-   formula so every hex stays exactly the same pixel size at a
-   given zoom level, everywhere on the map.
-═══════════════════════════════════════════════════════════ */
-/* ═══════════════════════════════════════════════════════════
-   HEX SCREEN POSITION — direct pixel-space math, no round-trip
-   ─────────────────────────────────────────────────────────
-   THE SEAM BUG, EXPLAINED:
-   ax2ll(q,r) converts a hex's zoom-0 pixel centre to a lat/lng
-   via map.unproject(), then the old hexCenterContainerPt fed
-   that lat/lng into map.latLngToContainerPoint(), which
-   internally re-projects it back to pixels. That's a pixel →
-   latlng → pixel round-trip through the Mercator inverse/
-   forward formulas (atan/sinh etc). At zoom 0 a single pixel
-   spans a huge real-world distance, so the intermediate
-   lat/lng has limited effective precision relative to what's
-   needed once re-projected at zoom 18+ (scale factor up to
-   2^18). Two adjacent hexes round through this independently
-   and can land a fraction of a pixel apart at their shared
-   corner — the visible "seam". (The old pointy-top version
-   computed hex centres as lat/lng directly via flat
-   arithmetic, with no such round-trip, which is why it never
-   showed this.)
-
-   THE FIX: skip lat/lng entirely. Go straight from our hex's
-   zoom-0 pixel centre to a "layer point" (Leaflet's absolute
-   pixel space at the current zoom, relative to the map's
-   pixel origin) using simple arithmetic — exactly what
-   map.project() does internally, with no inverse-trig
-   round-trip. Then hand that off to Leaflet's own
-   layerPointToContainerPoint(), which correctly accounts for
-   the map pane's LIVE position during active drag/zoom
-   gestures (unlike getPixelOrigin() alone, which only updates
-   once a gesture ends).
-═══════════════════════════════════════════════════════════ */
-function hexCenterContainerPt(q, r) {
-  const { mx, my } = ax2px0(q, r);            // zoom-0 pixel centre (exact)
-  const scale  = Math.pow(2, map.getZoom());  // current zoom scale factor
-  const absPt  = L.point(mx * scale, my * scale); // absolute pixel @ current zoom
-  const origin = map.getPixelOrigin();        // absolute pixel of layer-point (0,0)
-  const layerPt = L.point(absPt.x - origin.x, absPt.y - origin.y);
-  // layerPointToContainerPoint adds the map pane's current CSS transform
-  // offset, which Leaflet updates continuously during drags/zooms — this
-  // is the piece that keeps the hex glued to the map at every frame.
-  return map.layerPointToContainerPoint(layerPt);
+function saveRevealedHexes() {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify([...revealedHexes]));
+  } catch (e) { /* storage unavailable; ignore */ }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   FOG SVG RENDERER
-   ─────────────────────────────────────────────────────────
-   Two non-overlapping layers, each hex covered by exactly one:
-   Layer A: fogOp, world rect minus (revealed ∪ borders)
-   Layer B: borderOp, union of border hexes only
-═══════════════════════════════════════════════════════════ */
+function loadRevealedHexes() {
+  try {
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved) revealedHexes = new Set(JSON.parse(saved));
+  } catch (e) { /* storage unavailable or corrupt; ignore */ }
+}
+
+loadRevealedHexes();
+
+/* ===========================================================
+   FOG OF WAR RENDERING
+
+   Two SVG layers, each hex covered by exactly one of them:
+
+     Layer A (evenodd fill): the fog colour at fogOpacity,
+       with holes cut out for every revealed hex AND every
+       border hex (a hex adjacent to a revealed one).
+
+     Layer B (plain fill): just the border hexes, filled at
+       borderOpacity.
+
+   Net effect: revealed hexes are fully clear, border hexes
+   are at borderOpacity, and everything else is at fogOpacity.
+=========================================================== */
 const fogSvg = document.getElementById('fog-svg');
-const NS = 'http://www.w3.org/2000/svg';
+const SVG_NS = 'http://www.w3.org/2000/svg';
+const WORLD_RECT = 'M -99999,-99999 L 99999,-99999 L 99999,99999 L -99999,99999 Z ';
 
-let svgFogPath = null, svgBorderPath = null;
-let borderCache = null;
+let fogLayer = null;
+let borderLayer = null;
+let cachedBorderHexes = null;
 
-function getBorders() {
-  if (borderCache) return borderCache;
-  borderCache = new Set();
-  for (const k of revealed) {
-    const {q,r} = parseKey(k);
-    for (const [nq,nr] of nbrs(q,r)) {
-      const nk = hk(nq,nr);
-      if (!revealed.has(nk)) borderCache.add(nk);
+function getBorderHexes() {
+  if (cachedBorderHexes) return cachedBorderHexes;
+  cachedBorderHexes = new Set();
+  for (const key of revealedHexes) {
+    const { q, r } = parseHexKey(key);
+    for (const [nq, nr] of hexNeighbours(q, r)) {
+      const neighbourKey = hexKey(nq, nr);
+      if (!revealedHexes.has(neighbourKey)) cachedBorderHexes.add(neighbourKey);
     }
   }
-  return borderCache;
+  return cachedBorderHexes;
 }
-function invalidateBorders() { borderCache = null; }
 
-function hexCornersFromContainerCentre(c) {
-  const scale = Math.pow(2, map.getZoom());
-  const rad   = R0 * scale;
-  const pts = [];
-  for (let i=0; i<6; i++) {
-    const ang = i * (Math.PI/3);
-    pts.push({ x: c.x + rad*Math.cos(ang), y: c.y + rad*Math.sin(ang) });
+function invalidateBorderCache() { cachedBorderHexes = null; }
+
+function ensureFogLayers() {
+  if (!fogLayer) {
+    fogLayer = document.createElementNS(SVG_NS, 'path');
+    fogLayer.setAttribute('fill-rule', 'evenodd');
+    fogLayer.setAttribute('fill', '#101010');
+    fogLayer.setAttribute('pointer-events', 'none');
+    fogSvg.appendChild(fogLayer);
   }
-  return pts;
-}
-
-function pxToPd(pts) {
-  return 'M ' + pts.map(p=>`${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' L ') + ' Z';
-}
-
-function hexPathD(q, r) {
-  const c = hexCenterContainerPt(q, r);
-  return pxToPd(hexCornersFromContainerCentre(c));
-}
-
-const WORLD = 'M -99999,-99999 L 99999,-99999 L 99999,99999 L -99999,99999 Z ';
-
-function buildEvenOddPath(holeKeys) {
-  let d = WORLD;
-  for (const k of holeKeys) {
-    const {q,r} = parseKey(k);
-    d += hexPathD(q,r) + ' ';
-  }
-  return d;
-}
-function buildHexUnion(keys) {
-  let d = '';
-  for (const k of keys) {
-    const {q,r} = parseKey(k);
-    d += hexPathD(q,r) + ' ';
-  }
-  return d || 'M 0 0 Z';
-}
-
-function ensureSvgElements() {
-  if (!svgFogPath) {
-    svgFogPath = document.createElementNS(NS,'path');
-    svgFogPath.setAttribute('fill-rule','evenodd');
-    svgFogPath.setAttribute('fill','#101010');
-    svgFogPath.setAttribute('pointer-events','none');
-    fogSvg.appendChild(svgFogPath);
-  }
-  if (!svgBorderPath) {
-    svgBorderPath = document.createElementNS(NS,'path');
-    svgBorderPath.setAttribute('fill','#101010');
-    svgBorderPath.setAttribute('pointer-events','none');
-    fogSvg.appendChild(svgBorderPath);
+  if (!borderLayer) {
+    borderLayer = document.createElementNS(SVG_NS, 'path');
+    borderLayer.setAttribute('fill', '#101010');
+    borderLayer.setAttribute('pointer-events', 'none');
+    fogSvg.appendChild(borderLayer);
   }
 }
 
-function redrawFog() { invalidateBorders(); drawFog(); }
+function redrawFog() {
+  invalidateBorderCache();
+  drawFog();
+}
 
 function drawFog() {
-  ensureSvgElements();
+  ensureFogLayers();
 
-  const fogOp    = selectMode ? 0.5 : 0.95;
-  const borderOp = 0.5;
-  const borders  = getBorders();
+  const fogOpacity    = selectMode ? 0.5 : 0.95;
+  const borderOpacity = 0.5;
+  const borders = getBorderHexes();
 
-  svgFogPath.setAttribute('fill-opacity', String(fogOp));
-  svgFogPath.setAttribute('d', buildEvenOddPath(new Set([...revealed,...borders])));
+  let fogPath = WORLD_RECT;
+  for (const key of revealedHexes) {
+    const { q, r } = parseHexKey(key);
+    fogPath += hexSvgPath(q, r) + ' ';
+  }
+  for (const key of borders) {
+    const { q, r } = parseHexKey(key);
+    fogPath += hexSvgPath(q, r) + ' ';
+  }
+  fogLayer.setAttribute('fill-opacity', String(fogOpacity));
+  fogLayer.setAttribute('d', fogPath);
 
-  svgBorderPath.setAttribute('fill-opacity', String(borderOp));
-  svgBorderPath.setAttribute('d', buildHexUnion(borders));
+  let borderPath = '';
+  for (const key of borders) {
+    const { q, r } = parseHexKey(key);
+    borderPath += hexSvgPath(q, r) + ' ';
+  }
+  borderLayer.setAttribute('fill-opacity', String(borderOpacity));
+  borderLayer.setAttribute('d', borderPath || 'M 0 0 Z');
 }
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    MAP EVENTS
-═══════════════════════════════════════════════════════════ */
+=========================================================== */
 map.on('move zoom viewreset', drawFog);
 
 map.on('click', (e) => {
   if (!selectMode) return;
-  onHexClick(ll2key(e.latlng.lat, e.latlng.lng));
+  toggleHex(latLngToHexKey(e.latlng.lat, e.latlng.lng));
 });
 
-/* ═══════════════════════════════════════════════════════════
-   HEX CLICK
-═══════════════════════════════════════════════════════════ */
-function onHexClick(key) {
+/* ===========================================================
+   SELECT MODE — toggling hexes
+=========================================================== */
+function toggleHex(key) {
   if (!selectMode) return;
-  if (trackingOn && userLL) {
-    const uk = ll2key(userLL.lat, userLL.lng);
-    if (key === uk && revealed.has(key)) return;
+
+  // The hex the user is currently standing in can't be hidden again,
+  // since it would just be instantly revealed by GPS tracking.
+  if (trackingOn && userLatLng) {
+    const userKey = latLngToHexKey(userLatLng.lat, userLatLng.lng);
+    if (key === userKey && revealedHexes.has(key)) return;
   }
-  if (revealed.has(key)) revealed.delete(key);
-  else                    revealed.add(key);
-  store();
+
+  if (revealedHexes.has(key)) revealedHexes.delete(key);
+  else                          revealedHexes.add(key);
+
+  saveRevealedHexes();
   redrawFog();
-  updateStatus();
+  updateStatusLine();
 }
 
-/* ═══════════════════════════════════════════════════════════
-   LOCATION
-═══════════════════════════════════════════════════════════ */
-const userIcon = L.divIcon({
+/* ===========================================================
+   LOCATION TRACKING
+=========================================================== */
+const userLocationIcon = L.divIcon({
   className: '',
   html: '<div style="width:18px;height:18px;border-radius:50%;background:#00a0e0;border:3px solid #fff;box-shadow:0 0 8px rgba(0,160,224,.8);"></div>',
-  iconSize:[18,18], iconAnchor:[9,9],
+  iconSize: [18, 18],
+  iconAnchor: [9, 9],
 });
-let userMarker=null, userCircle=null;
 
-function onPosUpdate(pos) {
-  const {latitude:lat,longitude:lng,accuracy:acc} = pos.coords;
-  userLL = {lat,lng}; userAcc = acc;
-  if (!hasSnapped) {
-    hasSnapped = true;
-    map.setView([lat,lng], 16, {animate:false});
+let userMarker = null;
+let userAccuracyCircle = null;
+
+function onPositionUpdate(position) {
+  const { latitude: lat, longitude: lng, accuracy } = position.coords;
+  userLatLng  = { lat, lng };
+  userAccuracy = accuracy;
+
+  if (!hasSnappedToUser) {
+    hasSnappedToUser = true;
+    map.setView([lat, lng], 16, { animate: false });
   }
-  if (!userMarker) userMarker = L.marker([lat,lng],{icon:userIcon,zIndexOffset:1000}).addTo(map);
-  else             userMarker.setLatLng([lat,lng]);
-  if (!userCircle) {
-    userCircle = L.circle([lat,lng],{radius:acc,color:'#00a0e0',fillColor:'#00a0e0',fillOpacity:0.08,weight:1,opacity:0.4}).addTo(map);
+
+  if (!userMarker) {
+    userMarker = L.marker([lat, lng], { icon: userLocationIcon, zIndexOffset: 1000 }).addTo(map);
   } else {
-    userCircle.setLatLng([lat,lng]).setRadius(acc);
+    userMarker.setLatLng([lat, lng]);
   }
-  // 100m REAL-WORLD accuracy threshold — independent of hex visual size
-  if (acc < 100) {
-    const key = ll2key(lat,lng);
-    if (!revealed.has(key)) { revealed.add(key); store(); redrawFog(); }
+
+  if (!userAccuracyCircle) {
+    userAccuracyCircle = L.circle([lat, lng], {
+      radius: accuracy,
+      color: '#00a0e0',
+      fillColor: '#00a0e0',
+      fillOpacity: 0.08,
+      weight: 1,
+      opacity: 0.4,
+    }).addTo(map);
+  } else {
+    userAccuracyCircle.setLatLng([lat, lng]).setRadius(accuracy);
   }
-  updateStatus();
+
+  // Only reveal the user's current hex if GPS accuracy is good enough —
+  // this is a real-world metre threshold, independent of the hex grid's
+  // on-screen pixel size.
+  if (accuracy < 100) {
+    const key = latLngToHexKey(lat, lng);
+    if (!revealedHexes.has(key)) {
+      revealedHexes.add(key);
+      saveRevealedHexes();
+      redrawFog();
+    }
+  }
+
+  updateStatusLine();
 }
 
-function onPosError(e) { console.warn('Geo:',e.message); }
+function onPositionError(error) {
+  console.warn('Geolocation error:', error.message);
+}
 
 function startTracking() {
-  trackingOn=true; hasSnapped=false;
-  document.getElementById('btn-loc').textContent='Stop tracking';
-  document.getElementById('btn-loc').classList.add('active');
-  watchId = navigator.geolocation.watchPosition(onPosUpdate, onPosError,
-    {enableHighAccuracy:true, maximumAge:2000, timeout:10000});
-}
-function stopTracking() {
-  trackingOn=false;
-  document.getElementById('btn-loc').textContent='Use location';
-  document.getElementById('btn-loc').classList.remove('active');
-  if (watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;}
-  if (userMarker){map.removeLayer(userMarker);userMarker=null;}
-  if (userCircle){map.removeLayer(userCircle);userCircle=null;}
-  userLL=null; userAcc=null;
-  updateStatus();
+  trackingOn = true;
+  hasSnappedToUser = false;
+  document.getElementById('btn-location').textContent = 'Stop tracking';
+  document.getElementById('btn-location').classList.add('active');
+  watchId = navigator.geolocation.watchPosition(onPositionUpdate, onPositionError, {
+    enableHighAccuracy: true,
+    maximumAge: 2000,
+    timeout: 10000,
+  });
 }
 
-/* ═══════════════════════════════════════════════════════════
-   STATUS
-═══════════════════════════════════════════════════════════ */
-function updateStatus() {
+function stopTracking() {
+  trackingOn = false;
+  document.getElementById('btn-location').textContent = 'Use location';
+  document.getElementById('btn-location').classList.remove('active');
+
+  if (watchId !== null) {
+    navigator.geolocation.clearWatch(watchId);
+    watchId = null;
+  }
+  if (userMarker) { map.removeLayer(userMarker); userMarker = null; }
+  if (userAccuracyCircle) { map.removeLayer(userAccuracyCircle); userAccuracyCircle = null; }
+
+  userLatLng = null;
+  userAccuracy = null;
+  updateStatusLine();
+}
+
+/* ===========================================================
+   STATUS LINE
+=========================================================== */
+function updateStatusLine() {
   const el = document.getElementById('status-line');
-  if (trackingOn && userAcc!==null) {
-    el.textContent = `±${Math.round(userAcc)} meters`;
+  if (trackingOn && userAccuracy !== null) {
+    el.textContent = `±${Math.round(userAccuracy)} meters`;
   } else {
-    const n = revealed.size;
-    el.textContent = `${n} hexagon${n!==1?'s':''}`;
+    const count = revealedHexes.size;
+    el.textContent = `${count} hexagon${count !== 1 ? 's' : ''}`;
   }
 }
 
-/* ═══════════════════════════════════════════════════════════
-   BUTTONS
-═══════════════════════════════════════════════════════════ */
-document.getElementById('btn-menu').addEventListener('click',()=>{
+/* ===========================================================
+   BOTTOM BAR BUTTONS
+=========================================================== */
+document.getElementById('btn-menu').addEventListener('click', () => {
   document.getElementById('menu-overlay').classList.add('open');
 });
-document.getElementById('btn-loc').addEventListener('click',()=>{
-  if (!trackingOn){
-    if (!navigator.geolocation){alert('Geolocation not supported.');return;}
+
+document.getElementById('btn-location').addEventListener('click', () => {
+  if (!trackingOn) {
+    if (!navigator.geolocation) { alert('Geolocation not supported.'); return; }
     startTracking();
-  } else { stopTracking(); }
+  } else {
+    stopTracking();
+  }
 });
-document.getElementById('btn-select').addEventListener('click',()=>{
+
+document.getElementById('btn-select').addEventListener('click', () => {
   selectMode = !selectMode;
   const btn = document.getElementById('btn-select');
   btn.textContent = selectMode ? 'Done' : 'Select';
-  selectMode ? btn.classList.add('done-btn') : btn.classList.remove('done-btn');
+  btn.classList.toggle('done-btn', selectMode);
   redrawFog();
 });
 
-function closeMenu(){ document.getElementById('menu-overlay').classList.remove('open'); }
-document.getElementById('menu-backdrop').addEventListener('click',closeMenu);
-document.getElementById('menu-back').addEventListener('click',closeMenu);
+/* ===========================================================
+   MENU SHEET
+=========================================================== */
+function closeMenu() {
+  document.getElementById('menu-overlay').classList.remove('open');
+}
 
-document.getElementById('menu-save').addEventListener('click',()=>{
-  const blob=new Blob([JSON.stringify([...revealed])],{type:'application/json'});
-  const url=URL.createObjectURL(blob);
-  const a=Object.assign(document.createElement('a'),{
-    href:url, download:`hexploration-${new Date().toISOString().slice(0,10)}.json`
+document.getElementById('menu-backdrop').addEventListener('click', closeMenu);
+document.getElementById('menu-back').addEventListener('click', closeMenu);
+
+document.getElementById('menu-save').addEventListener('click', () => {
+  const blob = new Blob([JSON.stringify([...revealedHexes])], { type: 'application/json' });
+  const url  = URL.createObjectURL(blob);
+  const link = Object.assign(document.createElement('a'), {
+    href: url,
+    download: `hexploration-${new Date().toISOString().slice(0, 10)}.json`,
   });
-  document.body.appendChild(a); a.click(); document.body.removeChild(a);
-  URL.revokeObjectURL(url); closeMenu();
+  document.body.appendChild(link);
+  link.click();
+  document.body.removeChild(link);
+  URL.revokeObjectURL(url);
+  closeMenu();
 });
-document.getElementById('menu-load').addEventListener('click',()=>{
+
+document.getElementById('menu-load').addEventListener('click', () => {
   stopTracking();
-  const inp=Object.assign(document.createElement('input'),{type:'file',accept:'.json,application/json'});
-  inp.addEventListener('change',()=>{
-    const f=inp.files[0]; if(!f) return;
-    const fr=new FileReader();
-    fr.onload=e=>{
-      try {
-        const arr=JSON.parse(e.target.result);
-        if(!Array.isArray(arr)) throw 0;
-        revealed=new Set(arr); store(); redrawFog(); updateStatus(); closeMenu();
-      } catch { alert('Invalid file.'); }
-    };
-    fr.readAsText(f);
+  const fileInput = Object.assign(document.createElement('input'), {
+    type: 'file',
+    accept: '.json,application/json',
   });
-  inp.click();
+  fileInput.addEventListener('change', () => {
+    const file = fileInput.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (e) => {
+      try {
+        const imported = JSON.parse(e.target.result);
+        if (!Array.isArray(imported)) throw new Error('not an array');
+        revealedHexes = new Set(imported);
+        saveRevealedHexes();
+        redrawFog();
+        updateStatusLine();
+        closeMenu();
+      } catch {
+        alert('Invalid file.');
+      }
+    };
+    reader.readAsText(file);
+  });
+  fileInput.click();
 });
-document.getElementById('menu-clear').addEventListener('click',()=>{
+
+document.getElementById('menu-clear').addEventListener('click', () => {
   document.getElementById('confirm-overlay').classList.add('open');
 });
-document.getElementById('confirm-cancel').addEventListener('click',()=>{
+
+/* ===========================================================
+   CLEAR DATA CONFIRMATION
+=========================================================== */
+document.getElementById('confirm-cancel').addEventListener('click', () => {
   document.getElementById('confirm-overlay').classList.remove('open');
 });
-document.getElementById('confirm-ok').addEventListener('click',()=>{
-  stopTracking(); revealed.clear(); store(); redrawFog(); updateStatus();
+
+document.getElementById('confirm-ok').addEventListener('click', () => {
+  stopTracking();
+  revealedHexes.clear();
+  saveRevealedHexes();
+  redrawFog();
+  updateStatusLine();
   document.getElementById('confirm-overlay').classList.remove('open');
   closeMenu();
 });
 
-/* ═══════════════════════════════════════════════════════════
+/* ===========================================================
    INIT
-═══════════════════════════════════════════════════════════ */
-syncBarHeight();
-syncSvgSize();
-window.addEventListener('resize',()=>{ syncBarHeight(); syncSvgSize(); drawFog(); });
-updateStatus();
-drawFog();
+=========================================================== */
+syncLayout();
+window.addEventListener('resize', syncLayout);
+window.addEventListener('orientationchange', () => {
+  // iOS can report stale layout/safe-area values for a moment right as
+  // the rotation event fires, so re-sync now and again shortly after.
+  syncLayout();
+  setTimeout(syncLayout, 50);
+  setTimeout(syncLayout, 300);
+});
+updateStatusLine();
 </script>
 </body>
 </html>
