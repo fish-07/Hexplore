@@ -177,25 +177,61 @@
 'use strict';
 
 /* ═══════════════════════════════════════════════════════════
-   HEX GRID — flat-top axial, calibrated to ~100 m at 35°N
-═══════════════════════════════════════════════════════════ */
-const CAL_LAT           = 35;
-const MPD               = 111320;
-const TARGET_HEX_METRES = 100;
+   HEX GRID — defined in fixed Mercator-pixel space (zoom 0)
+   ─────────────────────────────────────────────────────────
+   Leaflet's default CRS (EPSG:3857 / Web Mercator) maps the
+   whole world to a 256×256 px square at zoom 0, and doubles
+   in size each zoom level.
 
-const pxPerMetreAtCalLatZ0 = (256 / 360 / MPD) / Math.cos(CAL_LAT * Math.PI / 180);
+   KEY IDEA: define the hex grid directly in zoom-0 pixel
+   units (a fixed, latitude-independent Cartesian plane).
+   Because it's already a flat pixel plane, every hex is
+   automatically THE SAME SCREEN SIZE at a given zoom level,
+   everywhere on the map.
+
+   CALIBRATION: the hex should be exactly 100 m corner-to-corner
+   (circumradius = 50 m) AT THE 35°N PARALLEL. Mercator's
+   pixel-per-metre ratio varies with latitude (it's the same in
+   x and y at any given point, scaled by 1/cos(lat)), so we
+   compute that ratio at lat=35° to size R0.
+
+   FLAT-TOP hexagons (point left/right, flat edge top/bottom):
+     mx = R·1.5·q
+     my = R√3·(r + q/2)
+   Inverse:
+     q  = mx·2/(3R)
+     r  = my/(R√3) − q/2
+═══════════════════════════════════════════════════════════ */
+
+const CAL_LAT = 35;                          // calibration latitude (°N)
+const MPD     = 111320;                      // metres per degree longitude at equator
+const TARGET_HEX_METRES = 100;               // desired corner-to-corner width at CAL_LAT
+
+// Web Mercator pixels-per-metre at zoom 0, at a given latitude:
+// world width = 256px for 360° of longitude → px/deg(lng) = 256/360 (constant, all latitudes)
+// px/metre(lng) = (256/360) / MPD  — this is also the LOCAL px/metre in the
+// y-direction at that latitude, because Web Mercator is conformal
+// (equal scale in x and y at every point), scaled by 1/cos(lat).
+const pxPerDegLngAtZ0 = 256 / 360;
+const pxPerMetreAtEquatorZ0 = pxPerDegLngAtZ0 / MPD;
+const pxPerMetreAtCalLatZ0  = pxPerMetreAtEquatorZ0 / Math.cos(CAL_LAT * Math.PI / 180);
+
+// Circumradius (R0) in zoom-0 pixels, calibrated so the hex is
+// TARGET_HEX_METRES wide (corner-to-corner = 2R) at CAL_LAT.
 const R0 = (TARGET_HEX_METRES / 2) * pxPerMetreAtCalLatZ0;
 
-function ax2ll(q, r) {
-  const mx = R0 * 1.5 * q;
-  const my = R0 * Math.sqrt(3) * (r + q / 2);
-  return map.unproject(L.point(mx, my), 0);
+function ll2zoom0px(lat, lng) {
+  const p = map.project(L.latLng(lat, lng), 0);
+  return { mx: p.x, my: p.y };
 }
 
-function ll2ax(lat, lng) {
-  const p  = map.project(L.latLng(lat, lng), 0);
-  const fq = p.x * 2 / (3 * R0);
-  const fr = p.y / (Math.sqrt(3) * R0) - fq / 2;
+// Flat-top axial from zoom-0 pixel coords
+function m2fax(mx, my) {
+  const fq = mx * 2 / (3 * R0);
+  const fr = my / (Math.sqrt(3) * R0) - fq / 2;
+  return { fq, fr };
+}
+function axRound(fq, fr) {
   const fs = -fq - fr;
   let q = Math.round(fq), r = Math.round(fr), s = Math.round(fs);
   const dq = Math.abs(q-fq), dr = Math.abs(r-fr), ds = Math.abs(s-fs);
@@ -203,14 +239,31 @@ function ll2ax(lat, lng) {
   else if (dr > ds)            r = -q - s;
   return { q, r };
 }
+function ll2key(lat, lng) {
+  const {mx,my} = ll2zoom0px(lat,lng);
+  const {fq,fr} = m2fax(mx,my);
+  const {q,r}   = axRound(fq,fr);
+  return `${q},${r}`;
+}
 
-function ll2key(lat, lng) { const {q,r} = ll2ax(lat,lng); return `${q},${r}`; }
-function hk(q, r)         { return `${q},${r}`; }
-function parseKey(k)      { const [q,r] = k.split(',').map(Number); return {q,r}; }
-function nbrs(q, r)       { return [[q+1,r],[q-1,r],[q,r+1],[q,r-1],[q+1,r-1],[q-1,r+1]]; }
+// Axial → zoom-0 pixel centre
+function ax2px0(q, r) {
+  return { mx: R0*1.5*q, my: R0*Math.sqrt(3)*(r+q/2) };
+}
+// Axial → LatLng (for placing markers etc, rarely needed)
+function ax2ll(q, r) {
+  const {mx,my} = ax2px0(q,r);
+  return map.unproject(L.point(mx,my), 0);
+}
+
+function nbrs(q, r) {
+  return [[q+1,r],[q-1,r],[q,r+1],[q,r-1],[q+1,r-1],[q-1,r+1]];
+}
+function hk(q,r)     { return `${q},${r}`; }
+function parseKey(k) { const [q,r]=k.split(',').map(Number); return {q,r}; }
 
 /* ═══════════════════════════════════════════════════════════
-   MAP
+   MAP — standard Web Mercator with OSM street tiles
 ═══════════════════════════════════════════════════════════ */
 const map = L.map('map', {
   center: [20, 0], zoom: 3,
@@ -222,10 +275,10 @@ L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
 
 function syncBarHeight() {
   const h = document.getElementById('bar').getBoundingClientRect().height;
-  document.documentElement.style.setProperty('--bar-h', h + 'px');
+  document.documentElement.style.setProperty('--bar-h', h+'px');
 }
 function syncSvgSize() {
-  const el   = document.getElementById('fog-svg');
+  const el = document.getElementById('fog-svg');
   const rect = el.getBoundingClientRect();
   el.setAttribute('width',  Math.ceil(rect.width));
   el.setAttribute('height', Math.ceil(rect.height));
@@ -246,106 +299,89 @@ let hasSnapped = false;
    STORAGE
 ═══════════════════════════════════════════════════════════ */
 const SK = 'hexploration_v1';
-function store() { try { localStorage.setItem(SK, JSON.stringify([...revealed])); } catch(e){} }
-function load()  { try { const d = localStorage.getItem(SK); if (d) revealed = new Set(JSON.parse(d)); } catch(e){} }
+function store() { try { localStorage.setItem(SK,JSON.stringify([...revealed])); } catch(e){} }
+function load()  { try { const d=localStorage.getItem(SK); if(d) revealed=new Set(JSON.parse(d)); } catch(e){} }
 load();
 
 /* ═══════════════════════════════════════════════════════════
-   HEX SCREEN GEOMETRY
-═══════════════════════════════════════════════════════════ */
-function hexScreenRadius() {
-  return R0 * Math.pow(2, map.getZoom());
-}
-
-// Returns SVG path string for one hex given its axial coords.
-// Uses latLngToContainerPoint so it tracks live during pan/zoom.
-function hexPathD(q, r) {
-  const ll  = ax2ll(q, r);
-  const c   = map.latLngToContainerPoint(ll);
-  const rad = hexScreenRadius();
-  let d = '';
-  for (let i = 0; i < 6; i++) {
-    const ang = i * (Math.PI / 3); // flat-top corners at 0°,60°,…
-    const x = (c.x + rad * Math.cos(ang)).toFixed(2);
-    const y = (c.y + rad * Math.sin(ang)).toFixed(2);
-    d += (i === 0 ? 'M ' : ' L ') + x + ',' + y;
-  }
-  return d + ' Z';
-}
-
-/* ═══════════════════════════════════════════════════════════
-   VIEWPORT HEX ENUMERATION
+   PIXEL-SPACE HEX CORNERS (screen pixels at current zoom)
    ─────────────────────────────────────────────────────────
-   To cover the viewport with fog we need to know which hexes
-   are visible. We convert the viewport bounds to axial coords
-   and iterate over the bounding rectangle of that range,
-   adding a 2-hex margin so fog always bleeds past the edges.
+   IMPORTANT: we must use map.latLngToContainerPoint() to find
+   each hex's screen position, NOT manual pixelOrigin arithmetic.
+   Leaflet updates latLngToContainerPoint continuously during
+   active drag/zoom gestures (it accounts for the live CSS
+   transform on the map pane), whereas map.getPixelOrigin()
+   only updates once a gesture ends — using it mid-drag causes
+   the hex overlay to lag behind or move the wrong direction
+   relative to the map tiles.
+
+   The hex's on-screen RADIUS still uses the fixed R0 * 2^zoom
+   formula so every hex stays exactly the same pixel size at a
+   given zoom level, everywhere on the map.
 ═══════════════════════════════════════════════════════════ */
-function viewportHexes() {
-  const bounds = map.getBounds();
-  const pad    = 0.0001; // tiny padding to ensure full coverage at edges
+/* ═══════════════════════════════════════════════════════════
+   HEX SCREEN POSITION — direct pixel-space math, no round-trip
+   ─────────────────────────────────────────────────────────
+   THE SEAM BUG, EXPLAINED:
+   ax2ll(q,r) converts a hex's zoom-0 pixel centre to a lat/lng
+   via map.unproject(), then the old hexCenterContainerPt fed
+   that lat/lng into map.latLngToContainerPoint(), which
+   internally re-projects it back to pixels. That's a pixel →
+   latlng → pixel round-trip through the Mercator inverse/
+   forward formulas (atan/sinh etc). At zoom 0 a single pixel
+   spans a huge real-world distance, so the intermediate
+   lat/lng has limited effective precision relative to what's
+   needed once re-projected at zoom 18+ (scale factor up to
+   2^18). Two adjacent hexes round through this independently
+   and can land a fraction of a pixel apart at their shared
+   corner — the visible "seam". (The old pointy-top version
+   computed hex centres as lat/lng directly via flat
+   arithmetic, with no such round-trip, which is why it never
+   showed this.)
 
-  // Four corners → axial, find min/max q and r
-  const corners = [
-    ll2ax(bounds.getNorth() + pad, bounds.getWest()  - pad),
-    ll2ax(bounds.getNorth() + pad, bounds.getEast()  + pad),
-    ll2ax(bounds.getSouth() - pad, bounds.getWest()  - pad),
-    ll2ax(bounds.getSouth() - pad, bounds.getEast()  + pad),
-  ];
-
-  let minQ = Infinity, maxQ = -Infinity;
-  let minR = Infinity, maxR = -Infinity;
-  for (const {q, r} of corners) {
-    if (q < minQ) minQ = q; if (q > maxQ) maxQ = q;
-    if (r < minR) minR = r; if (r > maxR) maxR = r;
-  }
-
-  // Add 2-hex margin
-  minQ -= 2; maxQ += 2;
-  minR -= 2; maxR += 2;
-
-  const hexes = [];
-  for (let q = minQ; q <= maxQ; q++) {
-    for (let r = minR; r <= maxR; r++) {
-      hexes.push({ q, r, k: hk(q, r) });
-    }
-  }
-  return hexes;
+   THE FIX: skip lat/lng entirely. Go straight from our hex's
+   zoom-0 pixel centre to a "layer point" (Leaflet's absolute
+   pixel space at the current zoom, relative to the map's
+   pixel origin) using simple arithmetic — exactly what
+   map.project() does internally, with no inverse-trig
+   round-trip. Then hand that off to Leaflet's own
+   layerPointToContainerPoint(), which correctly accounts for
+   the map pane's LIVE position during active drag/zoom
+   gestures (unlike getPixelOrigin() alone, which only updates
+   once a gesture ends).
+═══════════════════════════════════════════════════════════ */
+function hexCenterContainerPt(q, r) {
+  const { mx, my } = ax2px0(q, r);            // zoom-0 pixel centre (exact)
+  const scale  = Math.pow(2, map.getZoom());  // current zoom scale factor
+  const absPt  = L.point(mx * scale, my * scale); // absolute pixel @ current zoom
+  const origin = map.getPixelOrigin();        // absolute pixel of layer-point (0,0)
+  const layerPt = L.point(absPt.x - origin.x, absPt.y - origin.y);
+  // layerPointToContainerPoint adds the map pane's current CSS transform
+  // offset, which Leaflet updates continuously during drags/zooms — this
+  // is the piece that keeps the hex glued to the map at every frame.
+  return map.layerPointToContainerPoint(layerPt);
 }
 
 /* ═══════════════════════════════════════════════════════════
    FOG SVG RENDERER
    ─────────────────────────────────────────────────────────
-   Approach: paint individual hex shapes, never overlapping.
-   Each visible hex falls into exactly one bucket:
-
-     • revealed  → skip (0% opacity, map shows through)
-     • border    → draw at 0.50 opacity
-     • fog       → draw at 0.95 opacity (or 0.50 in Select mode)
-
-   Because we draw individual non-overlapping shapes, there is
-   no compositing between adjacent hexes at all. The boundary
-   between two revealed hexes is simply two skipped hexes — no
-   SVG path meeting, no anti-aliasing artifact, no hairline.
-
-   We use two <path> elements (fog + border) to minimise DOM
-   updates, concatenating all hex path strings per bucket.
+   Two non-overlapping layers, each hex covered by exactly one:
+   Layer A: fogOp, world rect minus (revealed ∪ borders)
+   Layer B: borderOp, union of border hexes only
 ═══════════════════════════════════════════════════════════ */
 const fogSvg = document.getElementById('fog-svg');
-const NS     = 'http://www.w3.org/2000/svg';
+const NS = 'http://www.w3.org/2000/svg';
 
-let svgFogPath    = null;
-let svgBorderPath = null;
-
-// Cached border set, invalidated whenever revealed changes
+let svgFogPath = null, svgBorderPath = null;
 let borderCache = null;
+
 function getBorders() {
   if (borderCache) return borderCache;
   borderCache = new Set();
   for (const k of revealed) {
-    const {q, r} = parseKey(k);
-    for (const [nq, nr] of nbrs(q, r)) {
-      const nk = hk(nq, nr);
+    const {q,r} = parseKey(k);
+    for (const [nq,nr] of nbrs(q,r)) {
+      const nk = hk(nq,nr);
       if (!revealed.has(nk)) borderCache.add(nk);
     }
   }
@@ -353,17 +389,57 @@ function getBorders() {
 }
 function invalidateBorders() { borderCache = null; }
 
+function hexCornersFromContainerCentre(c) {
+  const scale = Math.pow(2, map.getZoom());
+  const rad   = R0 * scale;
+  const pts = [];
+  for (let i=0; i<6; i++) {
+    const ang = i * (Math.PI/3);
+    pts.push({ x: c.x + rad*Math.cos(ang), y: c.y + rad*Math.sin(ang) });
+  }
+  return pts;
+}
+
+function pxToPd(pts) {
+  return 'M ' + pts.map(p=>`${p.x.toFixed(2)},${p.y.toFixed(2)}`).join(' L ') + ' Z';
+}
+
+function hexPathD(q, r) {
+  const c = hexCenterContainerPt(q, r);
+  return pxToPd(hexCornersFromContainerCentre(c));
+}
+
+const WORLD = 'M -99999,-99999 L 99999,-99999 L 99999,99999 L -99999,99999 Z ';
+
+function buildEvenOddPath(holeKeys) {
+  let d = WORLD;
+  for (const k of holeKeys) {
+    const {q,r} = parseKey(k);
+    d += hexPathD(q,r) + ' ';
+  }
+  return d;
+}
+function buildHexUnion(keys) {
+  let d = '';
+  for (const k of keys) {
+    const {q,r} = parseKey(k);
+    d += hexPathD(q,r) + ' ';
+  }
+  return d || 'M 0 0 Z';
+}
+
 function ensureSvgElements() {
   if (!svgFogPath) {
-    svgFogPath = document.createElementNS(NS, 'path');
-    svgFogPath.setAttribute('fill', '#101010');
-    svgFogPath.setAttribute('pointer-events', 'none');
+    svgFogPath = document.createElementNS(NS,'path');
+    svgFogPath.setAttribute('fill-rule','evenodd');
+    svgFogPath.setAttribute('fill','#101010');
+    svgFogPath.setAttribute('pointer-events','none');
     fogSvg.appendChild(svgFogPath);
   }
   if (!svgBorderPath) {
-    svgBorderPath = document.createElementNS(NS, 'path');
-    svgBorderPath.setAttribute('fill', '#101010');
-    svgBorderPath.setAttribute('pointer-events', 'none');
+    svgBorderPath = document.createElementNS(NS,'path');
+    svgBorderPath.setAttribute('fill','#101010');
+    svgBorderPath.setAttribute('pointer-events','none');
     fogSvg.appendChild(svgBorderPath);
   }
 }
@@ -373,28 +449,15 @@ function redrawFog() { invalidateBorders(); drawFog(); }
 function drawFog() {
   ensureSvgElements();
 
+  const fogOp    = selectMode ? 0.5 : 0.95;
+  const borderOp = 0.5;
   const borders  = getBorders();
-  const vhexes   = viewportHexes();
-  const fogOp    = selectMode ? 0.50 : 0.95;
-
-  let fogD    = '';
-  let borderD = '';
-
-  for (const {q, r, k} of vhexes) {
-    if (revealed.has(k)) {
-      // 0% opacity — draw nothing
-    } else if (borders.has(k)) {
-      borderD += hexPathD(q, r) + ' ';
-    } else {
-      fogD += hexPathD(q, r) + ' ';
-    }
-  }
 
   svgFogPath.setAttribute('fill-opacity', String(fogOp));
-  svgFogPath.setAttribute('d', fogD || 'M 0,0 Z');
+  svgFogPath.setAttribute('d', buildEvenOddPath(new Set([...revealed,...borders])));
 
-  svgBorderPath.setAttribute('fill-opacity', '0.5');
-  svgBorderPath.setAttribute('d', borderD || 'M 0,0 Z');
+  svgBorderPath.setAttribute('fill-opacity', String(borderOp));
+  svgBorderPath.setAttribute('d', buildHexUnion(borders));
 }
 
 /* ═══════════════════════════════════════════════════════════
@@ -429,48 +492,49 @@ function onHexClick(key) {
 const userIcon = L.divIcon({
   className: '',
   html: '<div style="width:18px;height:18px;border-radius:50%;background:#00a0e0;border:3px solid #fff;box-shadow:0 0 8px rgba(0,160,224,.8);"></div>',
-  iconSize: [18,18], iconAnchor: [9,9],
+  iconSize:[18,18], iconAnchor:[9,9],
 });
-let userMarker = null, userCircle = null;
+let userMarker=null, userCircle=null;
 
 function onPosUpdate(pos) {
-  const {latitude:lat, longitude:lng, accuracy:acc} = pos.coords;
-  userLL = {lat, lng}; userAcc = acc;
+  const {latitude:lat,longitude:lng,accuracy:acc} = pos.coords;
+  userLL = {lat,lng}; userAcc = acc;
   if (!hasSnapped) {
     hasSnapped = true;
-    map.setView([lat, lng], 16, {animate: false});
+    map.setView([lat,lng], 16, {animate:false});
   }
-  if (!userMarker) userMarker = L.marker([lat,lng], {icon:userIcon, zIndexOffset:1000}).addTo(map);
-  else             userMarker.setLatLng([lat, lng]);
+  if (!userMarker) userMarker = L.marker([lat,lng],{icon:userIcon,zIndexOffset:1000}).addTo(map);
+  else             userMarker.setLatLng([lat,lng]);
   if (!userCircle) {
-    userCircle = L.circle([lat,lng], {radius:acc, color:'#00a0e0', fillColor:'#00a0e0', fillOpacity:0.08, weight:1, opacity:0.4}).addTo(map);
+    userCircle = L.circle([lat,lng],{radius:acc,color:'#00a0e0',fillColor:'#00a0e0',fillOpacity:0.08,weight:1,opacity:0.4}).addTo(map);
   } else {
-    userCircle.setLatLng([lat, lng]).setRadius(acc);
+    userCircle.setLatLng([lat,lng]).setRadius(acc);
   }
+  // 100m REAL-WORLD accuracy threshold — independent of hex visual size
   if (acc < 100) {
-    const key = ll2key(lat, lng);
+    const key = ll2key(lat,lng);
     if (!revealed.has(key)) { revealed.add(key); store(); redrawFog(); }
   }
   updateStatus();
 }
 
-function onPosError(e) { console.warn('Geo:', e.message); }
+function onPosError(e) { console.warn('Geo:',e.message); }
 
 function startTracking() {
-  trackingOn = true; hasSnapped = false;
-  document.getElementById('btn-loc').textContent = 'Stop tracking';
+  trackingOn=true; hasSnapped=false;
+  document.getElementById('btn-loc').textContent='Stop tracking';
   document.getElementById('btn-loc').classList.add('active');
   watchId = navigator.geolocation.watchPosition(onPosUpdate, onPosError,
     {enableHighAccuracy:true, maximumAge:2000, timeout:10000});
 }
 function stopTracking() {
-  trackingOn = false;
-  document.getElementById('btn-loc').textContent = 'Use location';
+  trackingOn=false;
+  document.getElementById('btn-loc').textContent='Use location';
   document.getElementById('btn-loc').classList.remove('active');
-  if (watchId !== null) { navigator.geolocation.clearWatch(watchId); watchId = null; }
-  if (userMarker)       { map.removeLayer(userMarker); userMarker = null; }
-  if (userCircle)       { map.removeLayer(userCircle); userCircle = null; }
-  userLL = null; userAcc = null;
+  if (watchId!==null){navigator.geolocation.clearWatch(watchId);watchId=null;}
+  if (userMarker){map.removeLayer(userMarker);userMarker=null;}
+  if (userCircle){map.removeLayer(userCircle);userCircle=null;}
+  userLL=null; userAcc=null;
   updateStatus();
 }
 
@@ -479,27 +543,27 @@ function stopTracking() {
 ═══════════════════════════════════════════════════════════ */
 function updateStatus() {
   const el = document.getElementById('status-line');
-  if (trackingOn && userAcc !== null) {
+  if (trackingOn && userAcc!==null) {
     el.textContent = `±${Math.round(userAcc)} meters`;
   } else {
     const n = revealed.size;
-    el.textContent = `${n} hexagon${n !== 1 ? 's' : ''}`;
+    el.textContent = `${n} hexagon${n!==1?'s':''}`;
   }
 }
 
 /* ═══════════════════════════════════════════════════════════
    BUTTONS
 ═══════════════════════════════════════════════════════════ */
-document.getElementById('btn-menu').addEventListener('click', () => {
+document.getElementById('btn-menu').addEventListener('click',()=>{
   document.getElementById('menu-overlay').classList.add('open');
 });
-document.getElementById('btn-loc').addEventListener('click', () => {
-  if (!trackingOn) {
-    if (!navigator.geolocation) { alert('Geolocation not supported.'); return; }
+document.getElementById('btn-loc').addEventListener('click',()=>{
+  if (!trackingOn){
+    if (!navigator.geolocation){alert('Geolocation not supported.');return;}
     startTracking();
   } else { stopTracking(); }
 });
-document.getElementById('btn-select').addEventListener('click', () => {
+document.getElementById('btn-select').addEventListener('click',()=>{
   selectMode = !selectMode;
   const btn = document.getElementById('btn-select');
   btn.textContent = selectMode ? 'Done' : 'Select';
@@ -507,43 +571,43 @@ document.getElementById('btn-select').addEventListener('click', () => {
   redrawFog();
 });
 
-function closeMenu() { document.getElementById('menu-overlay').classList.remove('open'); }
-document.getElementById('menu-backdrop').addEventListener('click', closeMenu);
-document.getElementById('menu-back').addEventListener('click', closeMenu);
+function closeMenu(){ document.getElementById('menu-overlay').classList.remove('open'); }
+document.getElementById('menu-backdrop').addEventListener('click',closeMenu);
+document.getElementById('menu-back').addEventListener('click',closeMenu);
 
-document.getElementById('menu-save').addEventListener('click', () => {
-  const blob = new Blob([JSON.stringify([...revealed])], {type: 'application/json'});
-  const url  = URL.createObjectURL(blob);
-  const a    = Object.assign(document.createElement('a'), {
-    href: url, download: `hexploration-${new Date().toISOString().slice(0,10)}.json`
+document.getElementById('menu-save').addEventListener('click',()=>{
+  const blob=new Blob([JSON.stringify([...revealed])],{type:'application/json'});
+  const url=URL.createObjectURL(blob);
+  const a=Object.assign(document.createElement('a'),{
+    href:url, download:`hexploration-${new Date().toISOString().slice(0,10)}.json`
   });
   document.body.appendChild(a); a.click(); document.body.removeChild(a);
   URL.revokeObjectURL(url); closeMenu();
 });
-document.getElementById('menu-load').addEventListener('click', () => {
+document.getElementById('menu-load').addEventListener('click',()=>{
   stopTracking();
-  const inp = Object.assign(document.createElement('input'), {type:'file', accept:'.json,application/json'});
-  inp.addEventListener('change', () => {
-    const f = inp.files[0]; if (!f) return;
-    const fr = new FileReader();
-    fr.onload = e => {
+  const inp=Object.assign(document.createElement('input'),{type:'file',accept:'.json,application/json'});
+  inp.addEventListener('change',()=>{
+    const f=inp.files[0]; if(!f) return;
+    const fr=new FileReader();
+    fr.onload=e=>{
       try {
-        const arr = JSON.parse(e.target.result);
-        if (!Array.isArray(arr)) throw 0;
-        revealed = new Set(arr); store(); redrawFog(); updateStatus(); closeMenu();
+        const arr=JSON.parse(e.target.result);
+        if(!Array.isArray(arr)) throw 0;
+        revealed=new Set(arr); store(); redrawFog(); updateStatus(); closeMenu();
       } catch { alert('Invalid file.'); }
     };
     fr.readAsText(f);
   });
   inp.click();
 });
-document.getElementById('menu-clear').addEventListener('click', () => {
+document.getElementById('menu-clear').addEventListener('click',()=>{
   document.getElementById('confirm-overlay').classList.add('open');
 });
-document.getElementById('confirm-cancel').addEventListener('click', () => {
+document.getElementById('confirm-cancel').addEventListener('click',()=>{
   document.getElementById('confirm-overlay').classList.remove('open');
 });
-document.getElementById('confirm-ok').addEventListener('click', () => {
+document.getElementById('confirm-ok').addEventListener('click',()=>{
   stopTracking(); revealed.clear(); store(); redrawFog(); updateStatus();
   document.getElementById('confirm-overlay').classList.remove('open');
   closeMenu();
@@ -554,7 +618,7 @@ document.getElementById('confirm-ok').addEventListener('click', () => {
 ═══════════════════════════════════════════════════════════ */
 syncBarHeight();
 syncSvgSize();
-window.addEventListener('resize', () => { syncBarHeight(); syncSvgSize(); drawFog(); });
+window.addEventListener('resize',()=>{ syncBarHeight(); syncSvgSize(); drawFog(); });
 updateStatus();
 drawFog();
 </script>
