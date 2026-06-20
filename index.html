@@ -558,6 +558,14 @@ map.on('dragstart', () => {
   if (followMode && !isProgrammaticMove) setFollowMode(false);
 });
 
+map.on('zoomend', () => {
+  if (followMode && !isProgrammaticMove && userLatLng) {
+    isProgrammaticMove = true;
+    map.panTo([userLatLng.lat, userLatLng.lng], { animate: false });
+    isProgrammaticMove = false;
+  }
+});
+
 function updateStatusLine() {
   const el = document.getElementById('status-line');
   if (trackingOn && userAccuracy !== null) {
