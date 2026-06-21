@@ -493,7 +493,10 @@ function loadRevealedHexes() {
 loadRevealedHexes();
 
 function snapToRandomRevealedHex() {
-  if (revealedHexes.size === 0) return;
+  if (revealedHexes.size === 0) {
+    map.setView([20, 0], 3, { animate: false });
+    return;
+  }
   const keys = [...revealedHexes];
   const randomKey = keys[Math.floor(Math.random() * keys.length)];
   const { q, r } = parseHexKey(randomKey);
