@@ -615,6 +615,7 @@ let userAccuracyCircle = null;
 
 function onPositionUpdate(position) {
   const { latitude: lat, longitude: lng, accuracy } = position.coords;
+  const isFirstFix = !hasSnappedToUser;
   userLatLng = { lat, lng };
   userAccuracy = accuracy;
 
@@ -655,7 +656,7 @@ function onPositionUpdate(position) {
       if (draftHexes) draftHexes.add(key);
       saveRevealedHexes();
       redrawFog();
-      playStartSound();
+      if (!isFirstFix) playStartSound();
       checkMilestone(revealedHexes.size);
     }
   }
