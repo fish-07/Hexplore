@@ -390,17 +390,6 @@ const THEMES = {
     '--font': '"Helvetica Neue", Helvetica, Arial, sans-serif',
     locationColor: '#00a0e0',
   },
-  light: {
-    name: 'Light',
-    '--bg': '#fff',
-    '--surface': '#d0d0d0',
-    '--muted': '#b0b0b0',
-    '--text': '#101010',
-    '--accent': '#00a0e0',
-    '--danger': '#c00000',
-    '--font': '"Helvetica Neue", Helvetica, Arial, sans-serif',
-    locationColor: '#00a0e0',
-  },
   spring: {
     name: 'Spring',
     '--bg': '#081808',
@@ -418,7 +407,7 @@ const THEMES = {
     '--surface': '#002848',
     '--muted': '#004070',
     '--text': '#fff',
-    '--accent': '#e0a000',
+    '--accent': '#d09000',
     '--danger': '#d05800',
     '--font': 'Futura, "Trebuchet MS", Arial, sans-serif',
     locationColor: '#00a0e0',
@@ -478,9 +467,20 @@ const THEMES = {
     '--font': '"Courier New", Courier, monospace',
     locationColor: '#f060a0',
   },
+  light: {
+    name: 'Light',
+    '--bg': '#fff',
+    '--surface': '#e0e0e0',
+    '--muted': '#c0c0c0',
+    '--text': '#101010',
+    '--accent': '#00a0e0',
+    '--danger': '#c00000',
+    '--font': '"Helvetica Neue", Helvetica, Arial, sans-serif',
+    locationColor: '#00a0e0',
+  },
 };
 
-const THEME_ORDER = ['default', 'light', 'spring', 'summer', 'autumn', 'winter', 'orange', 'blue', 'magenta'];
+const THEME_ORDER = ['default', 'spring', 'summer', 'autumn', 'winter', 'orange', 'blue', 'magenta', 'light'];
 const THEME_KEY = 'hexplore_theme_v1';
 let currentThemeName = 'default';
 try {
