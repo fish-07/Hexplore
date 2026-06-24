@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Hexplore">
-<meta name="theme-color" content="#000000">
+<meta name="theme-color" content="#101010">
 <title>Hexplore</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -23,7 +23,7 @@
     --text: #fff;
     --accent: #00a0e0;
     --danger: #c00000;
-    --font: -apple-system, BlinkMacSystemFont, 'Helvetica Neue', sans-serif;
+    --font: "Helvetica Neue", Helvetica, Arial, sans-serif;
     --safe-t: env(safe-area-inset-top, 0px);
     --safe-b: env(safe-area-inset-bottom, 0px);
     --safe-l: env(safe-area-inset-left, 0px);
@@ -74,7 +74,7 @@
     border: none; outline: none; border-radius: 15px;
     background: var(--muted); color: var(--text);
     font-family: var(--font);
-    font-size: 15px; font-weight: 600; cursor: pointer;
+    font-size: 18px; font-weight: 600; cursor: pointer;
     transition: background .15s, transform .1s;
     -webkit-appearance: none;
   }
@@ -202,7 +202,7 @@
 
   .leaflet-control-attribution {
     background: rgba(0,0,0,0.5) !important;
-    color: #aaa !important;
+    color: #c0c0c0 !important;
   }
   .leaflet-control-attribution a { color: var(--accent) !important; }
 </style>
