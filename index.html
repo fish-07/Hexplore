@@ -253,7 +253,7 @@
   <div id="settings-sheet">
     <div id="settings-handle"></div>
     <button class="menu-btn back-btn" id="settings-back">Back</button>
-    <button class="menu-btn" id="menu-discovery">Minimum discovery: 50</button>
+    <button class="menu-btn" id="menu-discovery">Minimum discovery: 100</button>
     <button class="menu-btn" id="menu-milestone">Notify every: 500</button>
     <button class="menu-btn" id="menu-sound">Sound: On</button>
     <button class="menu-btn" id="menu-theme">Theme: Default</button>
@@ -745,8 +745,8 @@ const GEOCODE_DELAY_MS = 1100;
 const MAX_PLACE_DISTANCE_M = 10000;
 
 const DISCOVERY_STEP_KEY = 'hexplore_discovery_step_v1';
-const DISCOVERY_STEPS = [50, 100, 200, 500, 1000];
-let placesThreshold = 50;
+const DISCOVERY_STEPS = [20, 50, 100, 200, 500, 1000];
+let placesThreshold = 100;
 try {
   const saved = localStorage.getItem(DISCOVERY_STEP_KEY);
   if (saved !== null) {
@@ -1144,6 +1144,7 @@ function exitSelectMode(discard) {
   }
   redrawFog();
   updateStatusLine();
+  updateExportButton();
 }
 
 document.getElementById('btn-menu').addEventListener('click', () => {
@@ -1320,9 +1321,9 @@ document.getElementById('confirm-ok').addEventListener('click', () => {
   try { localStorage.setItem(MILESTONE_STEP_KEY, '500'); } catch (e) {}
   milestoneBtn.textContent = 'Notify every: 500';
 
-  placesThreshold = 50;
-  try { localStorage.setItem(DISCOVERY_STEP_KEY, '50'); } catch (e) {}
-  discoveryBtn.textContent = 'Minimum discovery: 50';
+  placesThreshold = 100;
+  try { localStorage.setItem(DISCOVERY_STEP_KEY, '100'); } catch (e) {}
+  discoveryBtn.textContent = 'Minimum discovery: 100';
 
   currentThemeName = 'default';
   try { localStorage.setItem(THEME_KEY, 'default'); } catch (e) {}
@@ -1332,6 +1333,7 @@ document.getElementById('confirm-ok').addEventListener('click', () => {
   map.setView([20, 0], 3, { animate: false });
   redrawFog();
   updateStatusLine();
+  updateExportButton();
   playCloseSound();
   document.getElementById('confirm-overlay').classList.remove('open');
   document.getElementById('menu-overlay').classList.remove('open', 'settings-open', 'places-open');
