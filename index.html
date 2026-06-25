@@ -93,7 +93,7 @@
     border: none; outline: none; border-radius: 15px;
     background: var(--muted); color: var(--text);
     font-family: var(--font);
-    font-size: 15px; font-weight: 600; cursor: pointer;
+    font-size: 18px; font-weight: 600; cursor: pointer;
     transition: background .15s, transform .1s;
     -webkit-appearance: none;
     z-index: 480;
@@ -111,7 +111,7 @@
     border: none; outline: none; border-radius: 15px;
     background: var(--muted); color: var(--text);
     font-family: var(--font);
-    font-size: 15px; font-weight: 600; cursor: pointer;
+    font-size: 18px; font-weight: 600; cursor: pointer;
     transition: background .15s, transform .1s;
     -webkit-appearance: none;
     z-index: 480;
@@ -629,7 +629,8 @@ function playStopSound() { tone(325, 550, 0.05, 0.5); }
 function playDiscoverySound() {
   tone(325, 450, 0.05, 0.5, 0);
   tone(388, 500, 0.05, 0.5, 0.05);
-  tone(450, 550, 0.05, 0.5, 0.1); }
+  tone(450, 550, 0.05, 0.5, 0.1);
+}
 
 const MILESTONE_COUNT_KEY = 'hexplore_milestone_count_v1';
 const MILESTONE_STEP_KEY = 'hexplore_milestone_step_v1';
@@ -740,6 +741,8 @@ function activeHexagons() { return selectMode ? draftHexagons : revealedHexagons
 
 loadAll();
 
+drainGeocodeQueue(true);
+
 const GEOCODE_DELAY_MS = 1100;
 const MAX_PLACE_DISTANCE_M = 10000;
 
@@ -757,7 +760,18 @@ try {
 function updateExportButton() {
   const btn = document.getElementById('menu-save');
   const unsorted = placesData.get(UNSORTED_KEY);
-  btn.classList.toggle('disabled', geocodingActive || (unsorted && unsorted.hexagons.size > 0));
+  const hasUnsorted = unsorted && unsorted.hexagons.size > 0;
+  btn.classList.toggle('disabled', revealedHexagons.size === 0 || geocodingActive || hasUnsorted);
+}
+
+function updatePlacesButton() {
+  const btn = document.getElementById('menu-places-open');
+  let hasPlaces = false;
+  for (const [name, data] of placesData) {
+    if (name === NO_LOCATION_KEY || name === UNSORTED_KEY) continue;
+    if (data.hexagons.size >= placesThreshold) { hasPlaces = true; break; }
+  }
+  btn.classList.toggle('disabled', !hasPlaces);
 }
 
 const geocodeCache = new Map();
@@ -809,13 +823,13 @@ async function geocodeHexagon(key) {
 function moveFromUnsortedToPlace(key, place, lat, lng, fromImport) {
   const unsorted = placesData.get(UNSORTED_KEY);
   if (unsorted) unsorted.hexagons.delete(key);
-
   let entry = placesData.get(place);
   if (!entry) { entry = { lat, lng, hexagons: new Set() }; placesData.set(place, entry); }
-  if (entry.hexagons.has(key)) { saveAll(); return; }
+  if (entry.hexagons.has(key)) { saveAll(); updateExportButton(); return; }
   const wasUnlocked = entry.hexagons.size >= placesThreshold;
   entry.hexagons.add(key);
   saveAll();
+  updateExportButton();
   const nowUnlocked = entry.hexagons.size >= placesThreshold;
   if (nowUnlocked) renderPlacesList();
   if (nowUnlocked && !wasUnlocked && !fromImport) { playDiscoverySound(); sendPlaceDiscoveredNotification(place); }
@@ -904,6 +918,7 @@ function renderPlacesList() {
     });
     list.appendChild(btn);
   }
+  updatePlacesButton();
 }
 
 function snapToRandomRevealedHexagon() {
@@ -1376,6 +1391,7 @@ applyTheme(currentThemeName);
 
 renderPlacesList();
 updateExportButton();
+updatePlacesButton();
 syncLayout(true);
 window.addEventListener('resize', () => syncLayout(true));
 window.addEventListener('orientationchange', () => {
