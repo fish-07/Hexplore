@@ -4,10 +4,11 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-status-bar-style" content="black">
 <meta name="apple-mobile-web-app-title" content="Hexplore">
 <link rel="apple-touch-icon" href="...">
 <link rel="icon" type="image/png" href="...">
+<meta name="theme-color" content="#101010">
 <title>Hexplore</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -43,7 +44,7 @@
 
   #map, #fog-svg {
     position: fixed;
-    top: 0;
+    top: var(--safe-t);
     left: var(--safe-l);
     right: var(--safe-r);
     bottom: var(--bar-height, 140px);
@@ -86,7 +87,7 @@
   #btn-follow {
     display: none;
     position: fixed;
-    top: calc(var(--safe-t) + 25px);
+    top: calc(var(--safe-t) + 15px);
     left: calc(var(--safe-l) + 15px);
     width: 110px; height: 40px;
     border: none; outline: none; border-radius: 15px;
@@ -104,7 +105,7 @@
   #btn-cancel-select {
     display: none;
     position: fixed;
-    top: calc(var(--safe-t) + 25px);
+    top: calc(var(--safe-t) + 15px);
     right: calc(var(--safe-r) + 15px);
     width: 110px; height: 40px;
     border: none; outline: none; border-radius: 15px;
@@ -213,16 +214,6 @@
     color: #c0c0c0 !important;
   }
   .leaflet-control-attribution a { color: var(--accent) !important; }
-
-  #status-bar-overlay {
-    position: fixed;
-    top: 0; left: 0; right: 0;
-    height: calc(var(--safe-t) + 10px);
-    background: var(--bg);
-    opacity: 0.8;
-    pointer-events: none;
-    z-index: 460;
-  }
 </style>
 </head>
 <body>
@@ -234,8 +225,7 @@
 
 <div id="map"></div>
 <svg id="fog-svg" xmlns="http://www.w3.org/2000/svg"></svg>
-<canvas id="mist-canvas" style="position:fixed;top:0;left:var(--safe-l);right:var(--safe-r);bottom:var(--bar-height,140px);pointer-events:none;z-index:451;display:none;"></canvas>
-<div id="status-bar-overlay"></div>
+<canvas id="mist-canvas" style="position:fixed;top:var(--safe-t);left:var(--safe-l);right:var(--safe-r);bottom:var(--bar-height,140px);pointer-events:none;z-index:451;display:none;"></canvas>
 <button id="btn-follow">Follow</button>
 <button id="btn-cancel-select">Cancel</button>
 
@@ -586,7 +576,6 @@ function applyTheme(name) {
   if (fogLayer) fogLayer.setAttribute('fill', theme['--bg']);
   if (borderLayer) borderLayer.setAttribute('fill', theme['--bg']);
   rebuildUserLocationIcon(theme.locationColor);
-  if (mistOn && !selectMode) drawMistCanvas();
 }
 
 function rebuildUserLocationIcon(color) {
@@ -1486,6 +1475,11 @@ themeBtn.addEventListener('click', () => {
   try { localStorage.setItem(THEME_KEY, nextName); } catch (e) {}
   themeBtn.textContent = `Theme: ${THEMES[nextName].name}`;
   playStartSound();
+  document.getElementById('menu-overlay').classList.remove('open', 'settings-open', 'places-open');
+  setTimeout(() => {
+    document.getElementById('menu-overlay').classList.add('open');
+    document.getElementById('menu-overlay').classList.add('settings-open');
+  }, 350);
 });
 
 loadCities();
@@ -1495,13 +1489,7 @@ renderPlacesList();
 updateExportButton();
 updatePlacesButton();
 syncLayout(true);
-setTimeout(() => syncLayout(true), 50);
-setTimeout(() => syncLayout(true), 300);
 window.addEventListener('resize', () => syncLayout(true));
-if (window.visualViewport) {
-  window.visualViewport.addEventListener('resize', () => syncLayout(true));
-  window.visualViewport.addEventListener('scroll', () => syncLayout(true));
-}
 window.addEventListener('orientationchange', () => {
   syncLayout(true);
   setTimeout(() => syncLayout(true), 50);
