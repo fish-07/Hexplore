@@ -4,11 +4,10 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Hexplore">
 <link rel="apple-touch-icon" href="...">
 <link rel="icon" type="image/png" href="...">
-<meta name="theme-color" content="#101010">
 <title>Hexplore</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -44,7 +43,7 @@
 
   #map, #fog-svg {
     position: fixed;
-    top: var(--safe-t);
+    top: 0;
     left: var(--safe-l);
     right: var(--safe-r);
     bottom: var(--bar-height, 140px);
@@ -235,7 +234,7 @@
 
 <div id="map"></div>
 <svg id="fog-svg" xmlns="http://www.w3.org/2000/svg"></svg>
-<canvas id="mist-canvas" style="position:fixed;top:var(--safe-t);left:var(--safe-l);right:var(--safe-r);bottom:var(--bar-height,140px);pointer-events:none;z-index:451;display:none;"></canvas>
+<canvas id="mist-canvas" style="position:fixed;top:0;left:var(--safe-l);right:var(--safe-r);bottom:var(--bar-height,140px);pointer-events:none;z-index:451;display:none;"></canvas>
 <div id="status-bar-overlay"></div>
 <button id="btn-follow">Follow</button>
 <button id="btn-cancel-select">Cancel</button>
