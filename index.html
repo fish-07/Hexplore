@@ -213,6 +213,16 @@
     color: #c0c0c0 !important;
   }
   .leaflet-control-attribution a { color: var(--accent) !important; }
+
+  #status-bar-overlay {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: var(--safe-t);
+    background: var(--bg);
+    opacity: 0.5;
+    pointer-events: none;
+    z-index: 460;
+  }
 </style>
 </head>
 <body>
