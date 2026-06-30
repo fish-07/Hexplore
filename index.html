@@ -577,6 +577,8 @@ function applyTheme(name) {
   if (borderLayer) borderLayer.setAttribute('fill', theme['--bg']);
   rebuildUserLocationIcon(theme.locationColor);
   if (mistOn && !selectMode) redrawFog();
+  const metaTheme = document.querySelector('meta[name="theme-color"]');
+  if (metaTheme) metaTheme.setAttribute('content', theme['--bg']);
 }
 
 function rebuildUserLocationIcon(color) {
@@ -1476,11 +1478,6 @@ themeBtn.addEventListener('click', () => {
   try { localStorage.setItem(THEME_KEY, nextName); } catch (e) {}
   themeBtn.textContent = `Theme: ${THEMES[nextName].name}`;
   playStartSound();
-  document.getElementById('menu-overlay').classList.remove('open', 'settings-open', 'places-open');
-  setTimeout(() => {
-    document.getElementById('menu-overlay').classList.add('open');
-    document.getElementById('menu-overlay').classList.add('settings-open');
-  }, 350);
 });
 
 loadCities();
