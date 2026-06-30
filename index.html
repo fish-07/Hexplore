@@ -228,6 +228,7 @@
 <body>
 
 
+<div id="probe-b" style="position:fixed;bottom:0;left:0;width:1px;height:env(safe-area-inset-bottom,0px);visibility:hidden;"></div>
 <div id="map"></div>
 <svg id="fog-svg" xmlns="http://www.w3.org/2000/svg"></svg>
 <canvas id="mist-canvas" style="position:fixed;top:0;left:var(--safe-l);right:var(--safe-r);bottom:var(--bar-height,140px);pointer-events:none;z-index:451;display:none;"></canvas>
@@ -382,7 +383,10 @@ function syncBarHeight() {
   document.documentElement.style.setProperty('--bar-height', height + 'px');
 }
 
-function syncSafeArea() {}
+function syncSafeArea() {
+  const bottom = document.getElementById('probe-b').getBoundingClientRect().height;
+  document.documentElement.style.setProperty('--safe-b', bottom + 'px');
+}
 
 function syncFogSvgSize() {
   const svg = document.getElementById('fog-svg');
@@ -1474,11 +1478,6 @@ themeBtn.addEventListener('click', () => {
   try { localStorage.setItem(THEME_KEY, nextName); } catch (e) {}
   themeBtn.textContent = `Theme: ${THEMES[nextName].name}`;
   playStartSound();
-  document.getElementById('menu-overlay').classList.remove('open', 'settings-open', 'places-open');
-  setTimeout(() => {
-    document.getElementById('menu-overlay').classList.add('open');
-    document.getElementById('menu-overlay').classList.add('settings-open');
-  }, 350);
 });
 
 loadCities();
