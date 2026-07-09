@@ -1355,7 +1355,7 @@ shapeBtn.addEventListener('click', () => {
   shapeName = SHAPE_ORDER[(idx + 1) % SHAPE_ORDER.length];
   try { localStorage.setItem(SHAPE_KEY, shapeName); } catch (e) {}
   shapeBtn.textContent = `Shape: ${shapeName === 'circles' ? 'Circles' : 'Hexagons'}`;
-  if (shapeName === 'circles') playStartSound(); else playStopSound();
+  playStartSound();
   redrawFog();
   renderPlacesList();
   updateStatusLine();
@@ -1394,7 +1394,11 @@ themeBtn.addEventListener('click', () => {
   playStartSound();
   const overlay = document.getElementById('menu-overlay');
   overlay.classList.remove('open', 'settings-open', 'places-open');
-  overlay.classList.add('open', 'settings-open');
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => {
+      overlay.classList.add('open', 'settings-open');
+    });
+  });
 });
 
 loadCities();
