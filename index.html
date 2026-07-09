@@ -4,9 +4,9 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Hexplore">
-<meta name="theme-color" id="theme-color-meta" content="#101010">
+<meta name="theme-color" content="#101010">
 <title>Hexplore</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; -webkit-tap-highlight-color: transparent; }
@@ -38,6 +38,15 @@
     font-family: var(--font);
     color: var(--text);
     user-select: none; -webkit-user-select: none;
+  }
+
+  #statusbar-tint {
+    position: fixed;
+    top: 0; left: 0; right: 0;
+    height: var(--safe-t);
+    background: var(--bg);
+    pointer-events: none;
+    z-index: 1000;
   }
 
   #map, #fog-canvas {
@@ -222,6 +231,7 @@
 <div id="probe-l" style="position:fixed;top:0;left:0;width:env(safe-area-inset-left,0px);height:1px;visibility:hidden;"></div>
 <div id="probe-r" style="position:fixed;top:0;right:0;width:env(safe-area-inset-right,0px);height:1px;visibility:hidden;"></div>
 
+<div id="statusbar-tint"></div>
 <div id="map"></div>
 <canvas id="fog-canvas"></canvas>
 <button id="btn-follow">Follow</button>
@@ -277,7 +287,7 @@
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
 <script>
 'use strict';
-const CITIES_DATA = `...`;
+const CITIES_DATA = `,,,`;
 
 const CALIBRATION_LATITUDE = 35;
 const METRES_PER_DEGREE = 111320;
@@ -552,22 +562,6 @@ try {
   if (saved && THEMES[saved]) currentThemeName = saved;
 } catch (e) {}
 
-function updateThemeColorMeta(color) {
-  // Safari on iOS frequently fails to repaint the status-bar / notch strip
-  // when a <meta name="theme-color"> tag's `content` attribute is merely
-  // mutated in place. Replacing the node outright forces Safari to notice
-  // the change and re-sample the color immediately, without waiting for an
-  // unrelated layout event (like opening/closing a sheet) to happen to
-  // trigger a resample.
-  const old = document.getElementById('theme-color-meta');
-  const meta = document.createElement('meta');
-  meta.name = 'theme-color';
-  meta.id = 'theme-color-meta';
-  meta.content = color;
-  if (old && old.parentNode) old.replaceWith(meta);
-  else document.head.appendChild(meta);
-}
-
 function applyTheme(name) {
   const theme = THEMES[name] || THEMES.default;
   currentThemeName = name;
@@ -575,7 +569,6 @@ function applyTheme(name) {
   for (const [prop, val] of Object.entries(theme)) {
     if (prop.startsWith('--')) root.style.setProperty(prop, val);
   }
-  updateThemeColorMeta(theme['--bg']);
   drawFog();
   rebuildUserLocationIcon(theme.locationColor);
 }
@@ -1407,6 +1400,9 @@ themeBtn.addEventListener('click', () => {
   try { localStorage.setItem(THEME_KEY, nextName); } catch (e) {}
   themeBtn.textContent = `Theme: ${THEMES[nextName].name}`;
   playStartSound();
+  const overlay = document.getElementById('menu-overlay');
+  overlay.classList.remove('open', 'settings-open', 'places-open');
+  overlay.classList.add('open', 'settings-open');
 });
 
 loadCities();
