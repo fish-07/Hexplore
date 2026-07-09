@@ -1392,13 +1392,11 @@ themeBtn.addEventListener('click', () => {
   try { localStorage.setItem(THEME_KEY, nextName); } catch (e) {}
   themeBtn.textContent = `Theme: ${THEMES[nextName].name}`;
   playStartSound();
-  const overlay = document.getElementById('menu-overlay');
-  overlay.classList.remove('open', 'settings-open', 'places-open');
-  requestAnimationFrame(() => {
-    requestAnimationFrame(() => {
-      overlay.classList.add('open', 'settings-open');
-    });
-  });
+  document.getElementById('menu-overlay').classList.remove('open', 'settings-open', 'places-open');
+  setTimeout(() => {
+    document.getElementById('menu-overlay').classList.add('open');
+    document.getElementById('menu-overlay').classList.add('settings-open');
+  }, 350);
 });
 
 loadCities();
