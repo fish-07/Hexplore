@@ -28,6 +28,8 @@
     --safe-b: env(safe-area-inset-bottom, 0px);
     --safe-l: env(safe-area-inset-left, 0px);
     --safe-r: env(safe-area-inset-right, 0px);
+    --top-extra: 10px;
+    --topbar-h: calc(var(--safe-t) + var(--top-extra));
   }
 
   html { background: var(--bg); }
@@ -43,7 +45,7 @@
   #statusbar-tint {
     position: fixed;
     top: 0; left: 0; right: 0;
-    height: var(--safe-t);
+    height: var(--topbar-h);
     background: var(--bg);
     pointer-events: none;
     z-index: 1000;
@@ -51,7 +53,7 @@
 
   #map, #fog-canvas {
     position: fixed;
-    top: var(--safe-t);
+    top: var(--topbar-h);
     left: var(--safe-l);
     right: var(--safe-r);
     bottom: var(--bar-height, 140px);
@@ -93,7 +95,7 @@
   #btn-follow {
     display: none;
     position: fixed;
-    top: calc(var(--safe-t) + 15px);
+    top: calc(var(--topbar-h) + 15px);
     left: calc(var(--safe-l) + 15px);
     width: 110px; height: 40px;
     border: none; outline: none; border-radius: 15px;
@@ -111,7 +113,7 @@
   #btn-cancel-select {
     display: none;
     position: fixed;
-    top: calc(var(--safe-t) + 15px);
+    top: calc(var(--topbar-h) + 15px);
     right: calc(var(--safe-r) + 15px);
     width: 110px; height: 40px;
     border: none; outline: none; border-radius: 15px;
@@ -1419,6 +1421,29 @@ window.addEventListener('orientationchange', () => {
   setTimeout(() => { syncLayout(true); applyTheme(currentThemeName); }, 300);
 });
 updateStatusLine();
+
+// iOS can report env(safe-area-inset-*) before it has settled into its
+// final full-screen layout (especially right after launch as a home-screen
+// app), so the probe-based measurement above can catch a too-small value
+// with nothing afterward to correct it. Re-measure a few times shortly
+// after launch, and again whenever the visual viewport reports a change
+// (fires reliably on iOS when safe-area/chrome insets change, even when
+// window 'resize' does not).
+function scheduleSafeAreaRecheck() {
+  requestAnimationFrame(() => {
+    requestAnimationFrame(() => syncLayout(true));
+  });
+  [50, 150, 300, 600, 1000, 2000].forEach((delay) => {
+    setTimeout(() => syncLayout(true), delay);
+  });
+}
+
+if (window.visualViewport) {
+  window.visualViewport.addEventListener('resize', () => syncLayout(true));
+}
+window.addEventListener('pageshow', () => scheduleSafeAreaRecheck());
+
+scheduleSafeAreaRecheck();
 </script>
 </body>
 </html>
