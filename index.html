@@ -4,7 +4,6 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
-<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="apple-mobile-web-app-title" content="Hexplore">
 <meta name="theme-color" content="#101010">
 <title>Hexplore</title>
@@ -28,7 +27,6 @@
     --safe-b: env(safe-area-inset-bottom, 0px);
     --safe-l: env(safe-area-inset-left, 0px);
     --safe-r: env(safe-area-inset-right, 0px);
-    --topbar-h: calc(env(safe-area-inset-top, 0px) + 10px);
   }
 
   html { background: var(--bg); }
@@ -41,18 +39,9 @@
     user-select: none; -webkit-user-select: none;
   }
 
-  #statusbar-tint {
-    position: fixed;
-    top: 0; left: 0; right: 0;
-    height: var(--topbar-h);
-    background: var(--bg);
-    pointer-events: none;
-    z-index: 1000;
-  }
-
   #map, #fog-canvas {
     position: fixed;
-    top: var(--topbar-h);
+    top: var(--safe-t);
     left: var(--safe-l);
     right: var(--safe-r);
     bottom: var(--bar-height, 140px);
@@ -94,7 +83,7 @@
   #btn-follow {
     display: none;
     position: fixed;
-    top: calc(var(--topbar-h) + 15px);
+    top: calc(var(--safe-t) + 15px);
     left: calc(var(--safe-l) + 15px);
     width: 110px; height: 40px;
     border: none; outline: none; border-radius: 15px;
@@ -112,7 +101,7 @@
   #btn-cancel-select {
     display: none;
     position: fixed;
-    top: calc(var(--topbar-h) + 15px);
+    top: calc(var(--safe-t) + 15px);
     right: calc(var(--safe-r) + 15px);
     width: 110px; height: 40px;
     border: none; outline: none; border-radius: 15px;
@@ -232,7 +221,6 @@
 <div id="probe-l" style="position:fixed;top:0;left:0;width:env(safe-area-inset-left,0px);height:1px;visibility:hidden;"></div>
 <div id="probe-r" style="position:fixed;top:0;right:0;width:env(safe-area-inset-right,0px);height:1px;visibility:hidden;"></div>
 
-<div id="statusbar-tint"></div>
 <div id="map"></div>
 <canvas id="fog-canvas"></canvas>
 <button id="btn-follow">Follow</button>
