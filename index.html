@@ -32,11 +32,11 @@
     --topbar-h: calc(var(--safe-t) + var(--top-extra));
   }
 
-  html { background: var(--bg); }
+  html { background: var(--surface); }
 
   body {
     width: 100%; height: 100%; overflow: hidden;
-    background: var(--bg);
+    background: var(--surface);
     font-family: var(--font);
     color: var(--text);
     user-select: none; -webkit-user-select: none;
@@ -49,15 +49,6 @@
     background: var(--bg);
     pointer-events: none;
     z-index: 1000;
-  }
-
-  #bottombar-tint {
-    position: fixed;
-    bottom: 0; left: 0; right: 0;
-    height: var(--bar-height, 140px);
-    background: var(--surface);
-    pointer-events: none;
-    z-index: 490;
   }
 
   #map, #fog-canvas {
@@ -78,7 +69,7 @@
     border-top: 1px solid var(--muted);
     display: flex; flex-direction: column; align-items: center;
     padding: 10px calc(15px + var(--safe-r)) 0 calc(15px + var(--safe-l));
-    padding-bottom: 20px;
+    padding-bottom: 0;
     gap: 10px;
     z-index: 500;
   }
@@ -243,7 +234,6 @@
 <div id="probe-r" style="position:fixed;top:0;right:0;width:env(safe-area-inset-right,0px);height:1px;visibility:hidden;"></div>
 
 <div id="statusbar-tint"></div>
-<div id="bottombar-tint"></div>
 <div id="map"></div>
 <canvas id="fog-canvas"></canvas>
 <button id="btn-follow">Follow</button>
